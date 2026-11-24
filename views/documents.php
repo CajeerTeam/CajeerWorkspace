@@ -1,0 +1,9 @@
+<?php namespace Workspace; ?>
+<p class="lede">Договоры, акты и другие документы с историей файлов.</p>
+<form method="get" class="filters"><input type="hidden" name="p" value="documents"><label>Проект<select name="project"><option value="">Все проекты</option><?php selectOptions($projects,$selected) ?></select></label><button class="secondary">Применить</button></form>
+<?php if ($projects): ?><details class="editor" <?= !$docs?'open':'' ?>><summary>Загрузить документ</summary><form method="post" enctype="multipart/form-data" class="formgrid"><?php formFields('document.version') ?>
+<label>Название документа<input name="title" maxlength="150" required></label><label>Вид документа<select name="kind"><?php selectOptions(DOC_KINDS) ?></select></label><label>Проект<select name="project_id" required><?php selectOptions($projects,$selected) ?></select></label>
+<label>PDF до 2 МиБ<input name="pdf" type="file" accept=".pdf,application/pdf" required></label><div class="formend"><button class="primary">Загрузить документ</button></div></form></details><?php else: ?><p class="notice">Сначала владелец или менеджер создаёт проект для документа.</p><?php endif ?>
+<section class="panel"><div class="panelhead"><h2>Реестр документов</h2><span class="count"><?= count($docs) ?></span></div>
+<?php if (!$docs): ?><p class="empty">В этой выборке документов пока нет.</p><?php else: ?><div class="tablewrap"><table><thead><tr><th>Документ</th><th>Вид</th><th>Проект</th><th>Версия</th></tr></thead><tbody>
+<?php foreach ($docs as $d): ?><tr><td><a class="itemtitle" href="<?= h(url('document',['id'=>$d['id']])) ?>"><?= h($d['title']) ?></a></td><td><?= h(DOC_KINDS[$d['kind']]) ?></td><td><?= h($d['project_title']) ?></td><td>v<?= (int)$d['revision'] ?></td></tr><?php endforeach ?></tbody></table></div><?php endif ?></section>

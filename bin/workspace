@@ -1,0 +1,123 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+namespace Workspace;
+
+use Throwable;
+
+require dirname(__DIR__).'/app/bootstrap.php';
+
+function passwordInput(): string {
+    $tty = stream_isatty(STDIN);
+    if ($tty) {
+        fwrite(STDERR,'Пароль (12–72 байта): ');
+        if (PHP_OS_FAMILY !== 'Windows') {
+            system('stty -echo', $code);
+            if ($code !== 0) throw new Problem('Не удалось скрыть ввод. Передайте пароль через stdin.');
+        } else {
+            throw new Problem('Передайте пароль через stdin.');
+        }
+    }
+    try {
+        $line = fgets(STDIN);
+        if ($line === false) throw new Problem('Пароль не получен через stdin.');
+        return rtrim($line,"\r\n");
+    } finally {
+        if ($tty) { system('stty echo'); fwrite(STDERR,"\n"); }
+    }
+}
+
+function helpText(): string {
+    return <<<HELP
+CajeerWorkspace PHP 0.1.0
+
+  php bin/workspace init EMAIL "Имя владельца"
+  php bin/workspace user:add EMAIL "Имя" ROLE
+  php bin/workspace user:password EMAIL
+  php bin/workspace user:disable EMAIL
+  php bin/workspace user:enable EMAIL
+  php bin/workspace sync [подключение]
+  php bin/workspace backup /полный/путь/к/новой-копии.sqlite
+  php bin/workspace version
+
+Роли: owner, manager, developer, accountant, legal, viewer.
+Пароли принимаются через stdin. В интерактивном Unix-терминале ввод скрыт.
+
+HELP;
+}
+
+try {
+    $command = $argv[1] ?? 'help';
+    if ($command === 'help' || $command === '--help') { echo helpText(); exit(0); }
+    if ($command === 'version') { echo VERSION,PHP_EOL; exit(0); }
+    if ($command === 'init') {
+        if ($argc !== 4) throw new Problem('Формат: init EMAIL "Имя"');
+        $db = database(true);
+        addUser($db,$argv[2],$argv[3],'owner',passwordInput(),true);
+        echo "Владелец создан. Можно войти в Workspace.\n";
+        exit(0);
+    }
+    $db = database();
+    switch ($command) {
+        case 'user:add':
+            if ($argc !== 5) throw new Problem('Формат: user:add EMAIL "Имя" ROLE');
+            addUser($db,$argv[2],$argv[3],$argv[4],passwordInput());
+            echo "Пользователь создан.\n";
+            break;
+        case 'user:password':
+        case 'user:disable':
+        case 'user:enable':
+            if ($argc !== 3) throw new Problem('Укажите email пользователя.');
+            $email = normalizedEmail($argv[2]);
+            $hash = $command === 'user:password' ? passwordHash(passwordInput()) : null;
+            atomic($db, static function () use ($db,$email,$command,$hash) {
+                $u = entity($db,'SELECT id,role,enabled FROM users WHERE email=?',[$email]);
+                if ($command === 'user:disable' && $u['enabled'] && $u['role']==='owner' &&
+                    (int)$db->query("SELECT COUNT(*) FROM users WHERE enabled=1 AND role='owner'")->fetchColumn()<=1) {
+                    throw new Problem('В пространстве должен оставаться активный владелец.');
+                }
+                if ($hash !== null) query($db,'UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?',[$hash,$u['id']]);
+                else query($db,'UPDATE users SET enabled=?,session_version=session_version+1 WHERE id=?',[(int)($command==='user:enable'),$u['id']]);
+            });
+            echo "Учётная запись обновлена.\n";
+            break;
+        case 'sync':
+            if ($argc > 3) throw new Problem('Формат: sync [подключение]');
+            $items = connections();
+            if (isset($argv[2])) {
+                $id = $argv[2];
+                if (!isset($items[$id]) || !$items[$id]['configured']) throw new Problem('Подключение отсутствует или не настроено.');
+                $items = [$id=>$items[$id]];
+            }
+            $lock = fopen(dataDir().'/sync.lock','c');
+            if (!$lock || !flock($lock,LOCK_EX|LOCK_NB)) throw new Problem('Другой процесс уже проверяет подключения.');
+            try { $failed = syncConnections($db,$items); }
+            finally { flock($lock,LOCK_UN); fclose($lock); }
+            exit($failed ? 1 : 0);
+        case 'backup':
+            if ($argc !== 3 || !str_starts_with($argv[2],DIRECTORY_SEPARATOR)) throw new Problem('Укажите абсолютный путь для новой копии.');
+            $dir = realpath(dirname($argv[2]));
+            $public = realpath(ROOT.'/public');
+            if (!$dir || $dir === $public || str_starts_with($dir,$public.DIRECTORY_SEPARATOR)) throw new Problem('Выберите существующий каталог вне public.');
+            $target = $dir.DIRECTORY_SEPARATOR.basename($argv[2]);
+            // Reserve a private name, then publish a fully written snapshot without overwriting any existing file.
+            if (file_exists($target) || is_link($target)) throw new Problem('Файл назначения уже существует.');
+            $tmp = tempnam($dir,'.cws-backup-');
+            if ($tmp === false || dirname($tmp)!==$dir) throw new Problem('Не удалось создать временный файл копии.');
+            try {
+                $db->exec('VACUUM INTO '.$db->quote($tmp));
+                $copy = new \PDO('sqlite:'.$tmp);
+                if ($copy->query('PRAGMA quick_check')->fetchColumn() !== 'ok' || $copy->query('PRAGMA foreign_key_check')->fetch()) throw new Problem('Проверка копии не пройдена.');
+                $copy = null;
+                if (!@link($tmp,$target)) throw new Problem('Не удалось сохранить копию под выбранным именем.');
+            } finally { @unlink($tmp); }
+            echo "Копия создана и проверена.\n";
+            break;
+        default:
+            fwrite(STDERR,helpText()); exit(2);
+    }
+} catch (Throwable $e) {
+    fwrite(STDERR,'Ошибка: '.($e instanceof Problem || $e instanceof \RuntimeException && !$e instanceof \PDOException ? $e->getMessage() : 'Проверьте установку PHP, расширения и права каталога.').PHP_EOL);
+    exit(2);
+}

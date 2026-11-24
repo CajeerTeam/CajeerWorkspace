@@ -1,0 +1,4 @@
+/var/
+/config/connections.local.json
+/.env
+/vendor/

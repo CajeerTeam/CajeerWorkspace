@@ -1,0 +1,5 @@
+<?php namespace Workspace; ?>
+<p class="lede">Результаты последнего опроса. Адреса и учётные данные задаёт администратор установки.</p>
+<section class="panel"><div class="panelhead"><h2>Сервисы Workspace</h2><span class="count"><?= count($items) ?></span></div><div class="tablewrap"><table><thead><tr><th>Сервис</th><th>Состояние</th><th>Результат</th><th>Проверка, UTC</th></tr></thead><tbody>
+<?php foreach ($items as $c): $r=$c['snapshot']; ?><tr><td><?php if ($c['launch']): ?><a class="itemtitle" href="<?= h($c['launch']) ?>" target="_blank" rel="noopener noreferrer"><?= h($c['label']) ?></a><?php else: ?><b><?= h($c['label']) ?></b><?php endif ?><small><?= h($c['purpose']) ?></small></td>
+<td><span class="pill <?= $c['status']==='Доступно'?'done':($c['status']==='Ошибка'?'fail':'') ?>"><?= h($c['status']) ?></span></td><td><?= h($r['summary'] ?? '—') ?></td><td class="nowrap"><?= $r?h(gmdate('d.m.Y H:i',(int)$r['checked_at'])):'—' ?></td></tr><?php endforeach ?></tbody></table></div></section>

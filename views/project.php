@@ -1,0 +1,19 @@
+<?php namespace Workspace; $id=(int)$project['id']; ?>
+<div class="projectmeta"><span class="pill"><?= h(PROJECT_KINDS[$project['kind']]) ?></span><?php if ($project['client']): ?><span>Заказчик · <?= h($project['client']) ?></span><?php endif ?>
+<?php if (can($user,'finance')): ?><a href="<?= h(url('finance',['project'=>$id])) ?>">Финансы проекта</a><?php endif ?>
+<?php if (can($user,'legal')): ?><a href="<?= h(url('documents',['project'=>$id])) ?>">Документы проекта</a><?php endif ?></div>
+<?php if (can($user,'manage')): ?><details class="editor" <?= !$tasks?'open':'' ?>><summary>Добавить задачу</summary><form method="post" class="formgrid"><?php formFields('task.create') ?><input type="hidden" name="project_id" value="<?= $id ?>">
+<label class="wide">Название задачи<input name="title" maxlength="180" required></label><label>Исполнитель<select name="assignee" aria-label="Исполнитель"><option value="">Не назначен</option><?php selectOptions($assignable) ?></select></label>
+<label>Срок <small>необязательно</small><input type="date" name="due_on"></label><div class="formend"><button class="primary">Добавить задачу</button></div></form></details><?php endif ?>
+<section class="panel"><div class="panelhead"><h2>Задачи проекта</h2><span class="count"><?= count($tasks) ?></span></div>
+<?php if (!$tasks): ?><p class="empty">В проекте пока нет задач.</p><?php else: ?><div class="tablewrap"><table><thead><tr><th>Задача</th><th>Исполнитель</th><th>Срок</th><th>Статус</th></tr></thead><tbody>
+<?php foreach ($tasks as $t): ?><tr><td class="itemtitle"><?= h($t['title']) ?></td><td><?= h($t['assignee'] ?? 'Не назначен') ?></td><td class="nowrap"><?= h(displayDate($t['due_on'])) ?></td><td>
+<?php if (can($user,'manage') || (can($user,'work') && (int)$t['assignee_id']===(int)$user['id'])): ?><form class="inline" method="post"><?php formFields('task.state') ?><input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>"><input type="hidden" name="version" value="<?= (int)$t['version'] ?>">
+<select name="state" aria-label="Статус задачи <?= h($t['title']) ?>"><?php selectOptions(STATES,$t['state']) ?></select><button class="secondary compact">Сохранить</button></form>
+<?php else: ?><span class="pill <?= h($t['state']) ?>"><?= h(STATES[$t['state']]) ?></span><?php endif ?></td></tr><?php endforeach ?></tbody></table></div><?php endif ?></section>
+<?php if (can($user,'connections')): ?><section class="panel"><div class="panelhead"><h2>Подключения проекта</h2></div>
+<?php if (!$links): ?><p class="empty">Подключения пока не привязаны.</p><?php endif ?>
+<?php foreach ($links as $key): $c=$connections[$key] ?? null; ?><div class="splitrow"><div><b><?= h($c['label'] ?? $key) ?></b><small><?= h($c['status'] ?? 'Удалено из конфигурации') ?></small></div>
+<?php if (!empty($c['launch'])): ?><a href="<?= h($c['launch']) ?>" target="_blank" rel="noopener noreferrer">Открыть</a><?php endif ?>
+<?php if (can($user,'manage')): ?><form method="post"><?php formFields('connection.detach') ?><input type="hidden" name="project_id" value="<?= $id ?>"><input type="hidden" name="connection" value="<?= h($key) ?>"><button class="secondary compact">Отвязать</button></form><?php endif ?></div><?php endforeach ?>
+<?php if (can($user,'manage') && ($other=array_diff_key($connections,array_flip($links)))): ?><form method="post" class="inline inset"><?php formFields('connection.attach') ?><input type="hidden" name="project_id" value="<?= $id ?>"><label>Подключение<select name="connection"><?php selectOptions(array_column($other,'label','id')) ?></select></label><button class="secondary">Привязать</button></form><?php endif ?></section><?php endif ?>

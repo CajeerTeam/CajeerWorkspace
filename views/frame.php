@@ -1,0 +1,24 @@
+<?php namespace Workspace;
+$notice = $_SESSION['notice'] ?? null;
+unset($_SESSION['notice']);
+$nav = ['overview'=>'Обзор','projects'=>'Проекты'];
+if ($user) {
+    if (can($user,'finance')) $nav['finance']='Финансы';
+    if (can($user,'legal')) $nav['documents']='Документы';
+    if (can($user,'connections')) $nav['connections']='Подключения';
+    if (can($user,'people')) $nav['team']='Команда';
+}
+$current = match ($view) {'project'=>'projects','document'=>'documents',default=>$view};
+?><!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+<title><?= h($title) ?> · CajeerWorkspace</title><link rel="stylesheet" href="./style.css"></head>
+<body class="<?= $user ? 'signed-in' : 'guest' ?>"><a class="skip" href="#content">К содержимому</a>
+<?php if ($user): ?><div class="shell">
+<aside class="sidebar"><a class="brand" href="<?= h(url('overview')) ?>"><span class="brandmark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Cajeer<span class="brandlight">Workspace</span></span></a>
+<nav aria-label="Основная навигация"><?php foreach ($nav as $n=>$label): ?><a href="<?= h(url($n)) ?>" <?= $current===$n?'aria-current="page"':'' ?>><?= h($label) ?></a><?php endforeach ?></nav>
+<div class="profile"><strong><?= h($user['name']) ?></strong><span><?= h(ROLES[$user['role']]) ?></span><form method="post"><?php formFields('logout') ?><button class="logout">Выйти</button></form></div></aside>
+<main id="content" class="main"><div class="heading"><div class="crumb"><a href="<?= h(url('overview')) ?>">Workspace</a><span>/</span><?= h($nav[$current] ?? 'Состояние') ?></div>
+<h1><?= h($title) ?></h1></div>
+<?php if ($notice): ?><div role="status" class="notice"><?= h($notice) ?></div><?php endif; require ROOT.'/views/'.$view.'.php'; ?>
+</main></div><?php else: ?><main id="content" class="guestmain"><?php require ROOT.'/views/'.$view.'.php'; ?></main><?php endif ?>
+</body></html>

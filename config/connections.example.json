@@ -1,0 +1,11 @@
+{
+  "engine":  {"base_url": null, "launch_url": null},
+  "logs":    {"base_url": null, "launch_url": null},
+  "forum":   {"base_url": null, "launch_url": null},
+  "book":    {"base_url": null, "launch_url": null},
+  "lite":    {"base_url": null, "launch_url": null},
+  "bots":    {"base_url": null, "launch_url": null},
+  "servers": {"base_url": null, "launch_url": null},
+  "aapanel": {"base_url": null, "launch_url": null, "secret_env": "WORKSPACE_AAPANEL_KEY"},
+  "github":  {"repository": "CajeerTeam/CajeerWorkspace", "secret_env": "WORKSPACE_GITHUB_TOKEN"}
+}
