@@ -1,0 +1,38 @@
+CREATE TABLE oidc_identities (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id),
+ issuer TEXT NOT NULL, subject TEXT NOT NULL,
+ UNIQUE(issuer,subject)
+);
+CREATE TABLE emergency_accounts (user_id INTEGER PRIMARY KEY REFERENCES users(id));
+CREATE TABLE mfa_credentials (
+ user_id INTEGER PRIMARY KEY REFERENCES users(id),
+ secret_box TEXT NOT NULL, last_step INTEGER NOT NULL DEFAULT -1
+);
+CREATE UNIQUE INDEX documents_project_id ON documents(project_id,id);
+CREATE TABLE guest_invites (
+ id INTEGER PRIMARY KEY,
+ organization_id INTEGER NOT NULL, project_id INTEGER NOT NULL,
+ document_id INTEGER NOT NULL, revision INTEGER NOT NULL,
+ email TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE CHECK(length(token_hash)=64),
+ created_by INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL,
+ issuer TEXT, subject TEXT, accepted_at INTEGER, access_until INTEGER, revoked_at INTEGER,
+ FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id),
+ FOREIGN KEY(project_id,document_id) REFERENCES documents(project_id,id),
+ FOREIGN KEY(document_id,revision) REFERENCES document_versions(document_id,revision),
+ CHECK ((accepted_at IS NULL AND issuer IS NULL AND subject IS NULL AND access_until IS NULL) OR (accepted_at IS NOT NULL AND issuer IS NOT NULL AND subject IS NOT NULL AND access_until IS NOT NULL))
+);
+CREATE INDEX guest_project ON guest_invites(project_id,id);
+CREATE INDEX guest_subject ON guest_invites(issuer,subject);
+CREATE TABLE oidc_sessions (
+ handle TEXT PRIMARY KEY CHECK(length(handle)=64), issuer TEXT NOT NULL, subject TEXT NOT NULL, sid TEXT,
+ user_id INTEGER REFERENCES users(id), guest_id INTEGER REFERENCES guest_invites(id),
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER,
+ CHECK ((user_id IS NULL AND guest_id IS NOT NULL) OR (user_id IS NOT NULL AND guest_id IS NULL))
+);
+CREATE INDEX oidc_sessions_subject ON oidc_sessions(issuer,subject,sid);
+CREATE TABLE oidc_logout_events (
+ event_hash TEXT PRIMARY KEY CHECK(length(event_hash)=64), issuer TEXT NOT NULL,
+ subject TEXT, sid TEXT, issued_at INTEGER NOT NULL,
+ CHECK (subject IS NOT NULL OR sid IS NOT NULL)
+);
+CREATE INDEX oidc_logout_expiry ON oidc_logout_events(issued_at);

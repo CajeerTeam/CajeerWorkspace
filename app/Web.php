@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -36,7 +36,7 @@ function sessionOpen(): void {
     ini_set('session.use_only_cookies','1');
     ini_set('session.gc_maxlifetime','43200');
     session_save_path($path);
-    $secure = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS']!=='off') || getenv('WORKSPACE_HTTPS')==='1';
+    $secure = oidcEnabled() || (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS']!=='off') || getenv('WORKSPACE_HTTPS')==='1';
     session_set_cookie_params(['lifetime'=>0,'path'=>'/','secure'=>$secure,'httponly'=>true,'samesite'=>'Lax']);
     if (!session_start()) throw new \RuntimeException('Не удалось открыть сессию.');
     $_SESSION['csrf'] ??= bin2hex(random_bytes(32));
@@ -50,11 +50,13 @@ function killLogin(): void {
 
 function currentUser(PDO $db): ?array {
     if (empty($_SESSION['uid'])) return null;
+    if (!in_array($_SESSION['auth_kind']??null,['local','emergency','oidc'],true)) { killLogin(); return null; }
     $now = time();
     $u = query($db,'SELECT id,name,email,role,session_version FROM users WHERE id=? AND enabled=1',[$_SESSION['uid']])->fetch();
     if (!$u || (int)$u['session_version'] !== $_SESSION['v'] || $now-$_SESSION['seen']>1800 || $now-$_SESSION['born']>43200) {
         killLogin(); return null;
     }
+    if (($_SESSION['auth_kind']==='local' && oidcEnabled()) || ($_SESSION['auth_kind']==='emergency' && (!oidcEnabled() || !emergencyAllowed($db,(int)$u['id'])))) { killLogin(); return null; }
     $_SESSION['seen'] = $now;
     $orgs=organizationsFor($db,(int)$u['id']);
     if (!$orgs) return array_replace($u,['organization_id'=>null,'organization_name'=>'Нет организации','organizations'=>[],'role'=>'viewer']);
@@ -85,30 +87,59 @@ function pageView(string $view, string $title, ?array $user = null, array $data 
 function handlePost(PDO $db, ?array $user): never {
     if (!isset($_POST['csrf']) || !is_string($_POST['csrf']) || !hash_equals($_SESSION['csrf'],$_POST['csrf'])) throw new Problem('Срок действия формы истёк. Обновите страницу.',403);
     $act = word($_POST['act'] ?? '',32,'Действие');
+    if (!empty($_SESSION['guest_id'])) {
+        if ($act==='logout') authLogout($db);
+        throw new Problem('Гостевой кабинет доступен только для чтения.',403);
+    }
+    if (in_array($act,['oidc.begin','guest.begin','staff.begin'],true)) {
+        if ($user || !oidcEnabled()) throw new Problem('Вход ID недоступен.',403);
+        authThrottle($db,'oidc:'.($_SERVER['REMOTE_ADDR']??''),40);
+        $hash=null;
+        if ($act!=='oidc.begin') {
+            $token=word($_POST['token']??'',64,'Код');
+            if (!preg_match('/\A[a-f0-9]{64}\z/',$token)) throw new Problem('Недействительное приглашение.',404);
+            $hash=hash('sha256',$token);
+            $table=$act==='guest.begin'?'guest_invites':'invitations';
+            entity($db,"SELECT id FROM $table WHERE token_hash=? AND expires_at>? AND accepted_at IS NULL AND revoked_at IS NULL",[$hash,time()]);
+        }
+        oidcBegin($act==='guest.begin'?$hash:null,$act==='staff.begin'?$hash:null);
+    }
     if ($act==='login') {
         if ($user) go('overview');
         $email = is_string($_POST['email'] ?? null) ? $_POST['email'] : '';
         $password = is_string($_POST['password'] ?? null) ? $_POST['password'] : '';
         $u = authenticate($db,$email,$password,$_SERVER['REMOTE_ADDR'] ?? '');
-        if (!$u) throw new Problem('Проверьте почту и пароль.',401);
+        if (!$u || (oidcEnabled() && !emergencyAllowed($db,(int)$u['id']))) throw new Problem('Проверьте почту и пароль либо используйте SkiF4er ID.',401);
         killLogin();
-        $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time()];
-        go('overview');
+        $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>oidcEnabled()?'emergency':'local'];
+        go(oidcEnabled()?'security':'overview');
     }
     if ($act==='invite.accept') {
+        if (oidcEnabled() && !$user) throw new Problem('Войдите через SkiF4er ID. Новую внутреннюю учётную запись привязывает оператор.',403);
+        if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
         $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
         if (!$user) { go('login'); }
-        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
+        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
     }
     if (!$user) go('login');
-    if ($act==='logout') { killLogin(); go('login'); }
-    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    if ($act==='logout') authLogout($db);
+    if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
+    if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
+    requireMfa($act);
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'guest.issue':
+            $pair=word($_POST['version']??'',64,'Редакция');
+            if (!preg_match('/\A([0-9]+):([0-9]+)\z/',$pair,$m)) throw new Problem('Выберите редакцию.');
+            $_SESSION['guest_token']=issueGuest($db,$user,$projectId(),numberId($m[1]),numberId($m[2]),word($_POST['email']??'',254,'Email'),numberId($_POST['hours']??0));
+            $_SESSION['guest_token_project']=$projectId(); go('project',['id'=>$projectId()]);
+        case 'guest.revoke':
+            revokeGuest($db,$user,$projectId(),numberId($_POST['guest_id']??0)); go('project',['id'=>$projectId()]);
         case 'org.create':
-            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
+            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
         case 'org.rename':
             renameOrganization($db,$user,word($_POST['name']??'',120,'Организация')); go('team');
         case 'team.rename': case 'team.delete':
@@ -186,6 +217,10 @@ function sendCsv(PDO $db,array $user): never {
 }
 
 function dispatch(PDO $db, ?array $user, string $page): void {
+    if (!empty($_SESSION['guest_id'])) { guestPage($db,$page); return; }
+    if ($page==='guest.join' && !$user && oidcEnabled()) { pageView('guest_join','Приглашение клиента'); return; }
+    if ($user && ($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false) && $page!=='security') go('security');
+    if ($page==='security' && $user) { mfaPage($db,$user); return; }
     if ($page==='invite') { pageView('invite',PAGE_TITLES['invite'],$user); return; }
     if (!$user) {
         if ($page !== 'login') go('login');
@@ -237,6 +272,11 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data = ['project'=>$p,'tasks'=>query($db,"SELECT t.*,u.name assignee FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.state='done',t.due_on IS NULL,t.due_on,t.id",[$p['id']])->fetchAll()];
             $data['projectRole']=projectRole($db,$user,(int)$p['id']);
             $data['dual']=dualControl($db,(int)$p['id']);
+            if ($user['role']==='owner' && $p['kind']==='client') {
+                $data['guestVersions']=query($db,'SELECT d.id,d.title,v.revision FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE d.project_id=? ORDER BY d.id,v.revision DESC',[$p['id']])->fetchAll();
+                $data['guestInvites']=query($db,'SELECT id,email,document_id,revision,expires_at,accepted_at,access_until,revoked_at FROM guest_invites WHERE project_id=? AND organization_id=? ORDER BY id DESC LIMIT 100',[$p['id'],$user['organization_id']])->fetchAll();
+                if (($_SESSION['guest_token_project']??null)===(int)$p['id']) { $data['guestToken']=$_SESSION['guest_token']??null; unset($_SESSION['guest_token'],$_SESSION['guest_token_project']); }
+            }
             $data['memberAdmin']=($user['role']==='owner'||($user['role']==='manager' && roleAllows($data['projectRole'],'manage')));
             if (roleAllows($data['projectRole'],'manage')) {
                 $data['members']=orgMembers($db,$user);
@@ -266,7 +306,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'audit':
             $rows=auditRows($db,$user,$projectId,isset($_GET['before'])?numberId($_GET['before']):null);
             $data=['events'=>array_slice($rows,0,50),'nextBefore'=>count($rows)>50?(int)$rows[49]['id']:null,'selected'=>$projectId,'projects'=>rightProjects($db,$user,'audit')]; break;
-        case 'export': sendCsv($db,$user);
+        case 'export':
+            if (!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
+            sendCsv($db,$user);
         case 'documents':
             $data['projects'] = $projectOptions();
             $data['selected'] = $projectId;
@@ -283,6 +325,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'download':
             $id = numberId($_GET['id'] ?? 0); $rev = numberId($_GET['v'] ?? 0);
             $doc = entity($db,"SELECT ".(isPostgres($db)?"encode(v.bytes,'hex')":"v.bytes")." AS bytes FROM document_versions v JOIN documents d ON d.id=v.document_id JOIN projects p ON p.id=d.project_id WHERE v.document_id=? AND v.revision=? AND $scope",[$id,$rev,...$scopeArgs]);
+            if (!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             if (isPostgres($db)) $doc['bytes']=hex2bin($doc['bytes']);
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="document-'.$id.'-v'.$rev.'.pdf"');
@@ -308,7 +351,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
             if ($user['role']==='owner') {
                 $data['invitations']=query($db,'SELECT id,email,role,expires_at,accepted_at,revoked_at FROM invitations WHERE organization_id=? ORDER BY id DESC LIMIT 100',[$user['organization_id']])->fetchAll();
-                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token']);
+                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']);
             }
             break;
         default: throw new Problem('Страница не найдена.',404);

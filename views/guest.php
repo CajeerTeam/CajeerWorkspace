@@ -1,0 +1,2 @@
+<?php namespace Workspace; ?>
+<section class="panel inset"><h1>Кабинет клиента</h1><h2><?= h($grant['project_title']) ?></h2><p>Согласованная редакция: <?= h($grant['document_title']) ?> · <?= h($grant['revision']) ?></p><p>SHA-256: <code><?= h($grant['sha256']) ?></code></p><p>Доступ до <?= h(gmdate('Y-m-d H:i',$grant['access_until'])) ?> UTC.</p><p><a href="<?= h(url('guest.download')) ?>">Скачать согласованный PDF</a></p><form method="post"><?php formFields('logout') ?><button class="secondary">Выйти</button></form></section>

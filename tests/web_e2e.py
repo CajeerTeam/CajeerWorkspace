@@ -9,6 +9,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib import error, parse, request
 import json
+import base64
+import hmac
+import re
 import os
 import secrets
 import shutil
@@ -23,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PHP = os.environ.get("PHP_BIN") or shutil.which("php")
 PASSWORD = "test-password-only"
 CHECKS = 0
+MFA_FIXTURES = {}
 
 
 def expect(value, name):
@@ -70,6 +74,7 @@ def application(env):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     root = f"http://127.0.0.1:{port}/"
+    env = env | {"WORKSPACE_MFA_KEY": "ab" * 32}
     with subprocess.Popen([PHP, "-S", f"127.0.0.1:{port}", "-t", "public"], cwd=ROOT, env=env,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
         try:
@@ -108,11 +113,34 @@ class Browser:
         with response:
             return response.status, response.read(), response.headers, response.geturl()
 
-    def login(self, role):
+    def login(self, role, step_up=True):
         page = self.call("?p=login")[1]
         form = fields(page, "login") | {"email":role+"@example.test","password":PASSWORD}
         status, _, headers, url = self.call(data=form)
         expect(status == 200 and url.endswith("?p=overview"), role+" login")
+        if step_up:
+            self.step_up(role)
+
+    def step_up(self, role):
+        status, body, _, _ = self.call("?p=security")
+        expect(status == 200, role+" security page")
+        found = re.search(rb'id="mfa-secret">([A-Z2-7]+)</code>', body)
+        if found:
+            secret, last = base64.b32decode(found.group(1)), -1
+            action = "mfa.enroll"
+        else:
+            secret, last = MFA_FIXTURES[role]
+            action = "mfa.verify"
+        step = max(int(time.time())//30, last+1)
+        while step > int(time.time())//30+1:
+            time.sleep(0.25)
+        mac = hmac.digest(secret, step.to_bytes(8, 'big'), 'sha1')
+        offset = mac[-1]&15
+        code = f"{(int.from_bytes(mac[offset:offset+4], 'big')&0x7fffffff)%1000000:06d}"
+        result = self.call("?p=security", fields(body, action) | {"code":code})
+        expect(result[0]==200 and 'Второй фактор подтверждён'.encode() in result[1], role+" MFA")
+        MFA_FIXTURES[role] = (secret, step)
+        return code
 
     def post(self, path, action, **values):
         form = fields(self.call(path)[1], action)

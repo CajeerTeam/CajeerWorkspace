@@ -10,7 +10,8 @@ if ($user && !empty($user['organization_id'])) {
     if ($user['nav_rights']['audit']??false) $nav['audit']='Аудит';
     if (can($user,'people')) $nav['team']='Команда';
 }
-if ($user) $nav['invite']='Приглашение';
+if ($user) { $nav['invite']='Приглашение'; $nav['security']='Безопасность'; }
+if ($user && ($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) $nav=['security'=>'Безопасность'];
 $current = match ($view) {'project'=>'projects','document'=>'documents',default=>$view};
 ?><!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">

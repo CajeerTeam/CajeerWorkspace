@@ -9,12 +9,25 @@ secureHeaders();
 $user = null;
 try {
     $db = database();
-    sessionOpen();
-    $user = currentUser($db);
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    $page=word($_GET['p']??'overview',32,'Страница');
+    if ($page==='oidc.backchannel') {
+        if ($method!=='POST') { header('Allow: POST'); throw new Problem('Метод не поддерживается.',405); }
+        backchannelLogout($db); exit;
+    }
+    sessionOpen();
+    if (($_SESSION['auth_kind']??null)==='oidc') {
+        if (!validateOidcSession($db) || time()-($_SESSION['seen']??0)>1800 || time()-($_SESSION['born']??0)>43200) killLogin();
+        elseif (!empty($_SESSION['guest_id'])) $_SESSION['seen']=time();
+    }
+    $user = currentUser($db);
+    if ($page==='oidc.callback') {
+        if ($method!=='GET'||$user||!empty($_SESSION['guest_id'])) throw new Problem('Недопустимый callback.',403);
+        oidcCallback($db);
+    }
     if ($method === 'POST') handlePost($db,$user);
     if ($method !== 'GET' && $method !== 'HEAD') { header('Allow: GET, HEAD, POST'); throw new Problem('Метод не поддерживается.',405); }
-    dispatch($db,$user,word($_GET['p'] ?? 'overview',32,'Страница'));
+    dispatch($db,$user,$page);
 } catch (Problem $e) {
     http_response_code($e->status);
     if (!$user && $e->status===401) pageView('login','Вход в Workspace',null,['error'=>$e->getMessage()]);

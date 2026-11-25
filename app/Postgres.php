@@ -34,10 +34,10 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || $v!==4) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
-        $db->exec($files[5]['sql']); recordMigration($db,5,$files,'applied');
+        for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
         validateLedger($db,SCHEMA_VERSION,$files);
     });
 }
@@ -47,11 +47,12 @@ const TRANSFER_TABLES = [
     'tasks'=>'id','cash_entries'=>'id','documents'=>'id','document_versions'=>'document_id,revision','project_connections'=>'project_id,connection_key',
     'connection_results'=>'connection_key','action_log'=>'id','connection_checks'=>'id','teams'=>'id','team_members'=>'team_id,user_id',
     'project_members'=>'project_id,user_id','invitations'=>'id','organization_connections'=>'connection_key',
-    'project_access'=>'project_id,user_id','payment_policies'=>'project_id','payment_requests'=>'id','audit_events'=>'id'
+    'project_access'=>'project_id,user_id','payment_policies'=>'project_id','payment_requests'=>'id','audit_events'=>'id',
+    'oidc_identities'=>'user_id','emergency_accounts'=>'user_id','mfa_credentials'=>'user_id','guest_invites'=>'id','oidc_sessions'=>'handle','oidc_logout_events'=>'event_hash'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
-    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
+    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_hash'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
     $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at":"*";
     $stmt=$db->query("SELECT $columns FROM $table ORDER BY $order");
     while ($row=$stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -72,7 +73,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.2.1.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.2.2.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

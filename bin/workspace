@@ -30,13 +30,18 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.2.1
+CajeerWorkspace PHP 0.2.2
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
   php bin/workspace user:password EMAIL
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
+  php bin/workspace auth:check
+  php bin/workspace auth:bind EMAIL SUBJECT
+  php bin/workspace auth:unbind EMAIL
+  php bin/workspace auth:emergency EMAIL on|off
+  php bin/workspace auth:mfa-reset EMAIL
   php bin/workspace doctor
   php bin/workspace upgrade [/абсолютный/путь/к/копии.sqlite]
   php bin/workspace migrations
@@ -70,6 +75,13 @@ try {
         $report=runtimeReport();
         echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
         exit($report['ok']?0:1);
+    }
+    if ($command==='auth:check') {
+        if ($argc!==2) throw new Problem('Формат: auth:check');
+        authKey();
+        if (oidcEnabled()) { $cfg=oidcConfig(); oidcDiscovery(); echo json_encode(['mode'=>'oidc','issuer'=>ID_ISSUER,'redirect_uri'=>$cfg['callback'],'post_logout_redirect_uri'=>$cfg['logout'],'mfa_key'=>'configured'],JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL; }
+        else echo "Local mode; MFA key configured.\n";
+        exit(0);
     }
     if ($command==='postgres:import') {
         if ($argc!==3) throw new Problem('Формат: postgres:import /абсолютный/путь/к/копии.sqlite');
@@ -105,6 +117,32 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'auth:bind': case 'auth:unbind': case 'auth:emergency': case 'auth:mfa-reset':
+            $needed=in_array($command,['auth:bind','auth:emergency'],true)?4:3;
+            if ($argc!==$needed) throw new Problem('Проверьте формат команды auth (help).');
+            $email=normalizedEmail($argv[2]);
+            atomic($db,function() use($db,$email,$command,$argv) {
+                $u=entity($db,'SELECT id,enabled FROM users WHERE LOWER(email)=?',[$email]); $uid=(int)$u['id'];
+                if ($command==='auth:bind') {
+                    $sub=word($argv[3],255,'OIDC subject');
+                    if (query($db,'SELECT 1 FROM oidc_identities WHERE user_id=? OR (issuer=? AND subject=?)',[$uid,ID_ISSUER,$sub])->fetchColumn() || query($db,'SELECT 1 FROM guest_invites WHERE issuer=? AND subject=? AND revoked_at IS NULL AND access_until>?',[ID_ISSUER,$sub,time()])->fetchColumn()) throw new Problem('Привязка уже существует или subject принадлежит гостю. Сначала отзовите прежний доступ.',409);
+                    query($db,'INSERT INTO oidc_identities(user_id,issuer,subject) VALUES(?,?,?)',[$uid,ID_ISSUER,$sub]);
+                } elseif ($command==='auth:unbind') {
+                    query($db,'DELETE FROM oidc_identities WHERE user_id=?',[$uid]);
+                } elseif ($command==='auth:emergency') {
+                    if (!in_array($argv[3],['on','off'],true)) throw new Problem('Укажите on или off.');
+                    if ($argv[3]==='on') {
+                        if (!$u['enabled']||!query($db,"SELECT 1 FROM organization_members WHERE user_id=? AND role='owner'",[$uid])->fetchColumn()||!query($db,'SELECT 1 FROM mfa_credentials WHERE user_id=?',[$uid])->fetchColumn()) throw new Problem('Нужен активный владелец с подключённым TOTP.');
+                        query($db,'INSERT INTO emergency_accounts(user_id) VALUES(?) ON CONFLICT DO NOTHING',[$uid]);
+                    } else query($db,'DELETE FROM emergency_accounts WHERE user_id=?',[$uid]);
+                } else {
+                    if (query($db,'SELECT 1 FROM emergency_accounts WHERE user_id=?',[$uid])->fetchColumn()) throw new Problem('Сначала отключите аварийный доступ.');
+                    query($db,'DELETE FROM mfa_credentials WHERE user_id=?',[$uid]);
+                }
+                query($db,'UPDATE users SET session_version=session_version+1 WHERE id=?',[$uid]);
+                query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL',[time(),$uid]);
+            });
+            echo "Настройки авторизации обновлены; прежние сессии отозваны.\n"; break;
         case 'connection:assign':
             if ($argc!==4) throw new Problem('Формат: connection:assign KEY ORG_ID');
             $key=word($argv[2],48,'Подключение'); $org=numberId($argv[3]);

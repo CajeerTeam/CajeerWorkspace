@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = 'SHA256SUMS'
 # Explicit release inventory: no data, private configuration, VCS, secrets or build outputs.
 FILES = '''LICENSE README.md ROADMAP.md VERSION composer.json .gitignore
-app/Core.php app/Permissions.php app/Payments.php app/Organizations.php app/Postgres.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
-bin/workspace config/connections.example.json docs/INTEGRATIONS.md docs/UPGRADE.md docs/ORGANIZATIONS.md docs/PERMISSIONS.md
+app/Core.php app/Oidc.php app/Auth.php app/Permissions.php app/Payments.php app/Organizations.php app/Postgres.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
+bin/workspace config/connections.example.json docs/INTEGRATIONS.md docs/UPGRADE.md docs/ORGANIZATIONS.md docs/PERMISSIONS.md docs/AUTHENTICATION.md
 public/health.php public/index.php public/style.css
-views/audit.php views/payments.php views/connections.php views/document.php views/documents.php views/error.php views/finance.php views/frame.php views/login.php views/overview.php views/invite.php views/search.php views/project.php views/projects.php views/team.php
-tools/release.py tests/integration_profiles.php tests/run.php tests/web_e2e.py tests/migrations.php tests/release.py tests/tenant_e2e.py tests/tenant_schema.py tests/permissions_schema.py tests/permissions_e2e.py tests/permissions_roles.php .github/workflows/ci.yml'''.split()
+views/security.php views/guest.php views/guest_join.php views/audit.php views/payments.php views/connections.php views/document.php views/documents.php views/error.php views/finance.php views/frame.php views/login.php views/overview.php views/invite.php views/search.php views/project.php views/projects.php views/team.php
+tools/release.py tests/integration_profiles.php tests/run.php tests/web_e2e.py tests/migrations.php tests/release.py tests/tenant_e2e.py tests/tenant_schema.py tests/permissions_schema.py tests/permissions_e2e.py tests/permissions_roles.php tests/auth_security.php tests/auth_schema.py tests/auth_db.php tests/auth_e2e.py .github/workflows/ci.yml'''.split()
 VERSION_RE = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+')
 MAX_FILE = 32 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024

@@ -13,7 +13,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo_sqlite, curl
+          extensions: pdo_sqlite, curl, openssl
           coverage: none
       - run: find app public views tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php -l bin/workspace
@@ -25,6 +25,10 @@ jobs:
       - run: python3 tests/release.py
       - run: python3 tests/tenant_schema.py
       - run: python3 tests/tenant_e2e.py
+      - run: php tests/auth_security.php
+      - run: python3 tests/auth_schema.py
+      - run: php tests/auth_db.php
+      - run: python3 tests/auth_e2e.py
       - run: php tests/permissions_roles.php
       - run: python3 tests/permissions_schema.py
       - run: python3 tests/permissions_e2e.py
@@ -46,7 +50,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions']
+        suite: ['tenant', 'permissions', 'auth']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -73,6 +77,9 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: pdo_sqlite, pdo_pgsql, curl
+          extensions: pdo_sqlite, pdo_pgsql, curl, openssl
           coverage: none
-      - run: python3 tests/${{ matrix.suite }}_e2e.py --postgres
+      - if: matrix.suite != 'auth'
+        run: python3 tests/${{ matrix.suite }}_e2e.py --postgres
+      - if: matrix.suite == 'auth'
+        run: php tests/auth_db.php --postgres

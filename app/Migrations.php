@@ -12,7 +12,7 @@ function runtimeReport(): array {
         'php'=>['ok'=>PHP_VERSION_ID >= 80300 && PHP_VERSION_ID < 90000,'actual'=>PHP_VERSION,'required'=>'>=8.3 <9.0'],
         'architecture'=>['ok'=>PHP_INT_SIZE === 8,'actual'=>PHP_INT_SIZE*8,'required'=>64],
     ];
-    foreach (['pdo',postgresSelected()?'pdo_pgsql':'pdo_sqlite','curl','session'] as $ext) {
+    foreach (['pdo',postgresSelected()?'pdo_pgsql':'pdo_sqlite','curl','session','openssl'] as $ext) {
         $checks[$ext]=['ok'=>extension_loaded($ext),'actual'=>extension_loaded($ext)?(phpversion($ext) ?: 'loaded'):'missing','required'=>'loaded'];
     }
     $sqlite=null;
