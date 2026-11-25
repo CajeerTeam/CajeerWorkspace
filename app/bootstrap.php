@@ -9,6 +9,7 @@ require_once __DIR__ . '/Permissions.php';
 require_once __DIR__ . '/Payments.php';
 require_once __DIR__ . '/Invoices.php';
 require_once __DIR__ . '/Accounting.php';
+require_once __DIR__ . '/Banking.php';
 require_once __DIR__ . '/Migrations.php';
 require_once __DIR__ . '/Postgres.php';
 require_once __DIR__ . '/Planning.php';

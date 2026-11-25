@@ -10,6 +10,7 @@ function paymentData(array $form): array {
 }
 function checkReversal(PDO $db,int $id): array {
     $entry=entity($db,'SELECT * FROM cash_entries WHERE id=?',[$id]);
+    if(query($db,'SELECT 1 FROM bank_allocations WHERE cash_id=?',[$id])->fetchColumn())throw new Problem('Сначала отмените банковское сопоставление кассовой записи.',409);
     if (query($db,'SELECT 1 FROM invoice_movements m JOIN payment_requests r ON r.id=m.request_id WHERE r.cash_entry_id=?',[$id])->fetchColumn()) throw new Problem('Движение счёта корректируется через возврат, не через сторно кассы.',409);
     if ($entry['reversal_of']!==null || query($db,'SELECT 1 FROM cash_entries WHERE reversal_of=?',[$id])->fetchColumn()) throw new Problem('Для этой записи сторно уже проведено.',409);
     return $entry;

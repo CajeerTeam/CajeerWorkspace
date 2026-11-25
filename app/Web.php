@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,16 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'bank.account': case 'bank.rate': case 'bank.import': case 'bank.match': case 'bank.unmatch': case 'bank.reconcile':
+            $form=$_POST;
+            if($act==='bank.import' && isset($_FILES['statement_file']) && $_FILES['statement_file']['error']!==UPLOAD_ERR_NO_FILE){
+                accountingUser($db,$user,true);$upload=$_FILES['statement_file'];
+                if($upload['error']!==UPLOAD_ERR_OK || !is_uploaded_file($upload['tmp_name']) || $upload['size']>1048576 || trim((string)($form['csv']??''))!=='')throw new Problem('Загрузите один CSV до 1 МиБ или вставьте текст.');
+                $form['csv']=file_get_contents($upload['tmp_name'],false,null,0,1048577);
+            }
+            $bid=bankCommand($db,$user,$key,$act,$form);$params=[];
+            if($act==='bank.account')$params=['account'=>$bid];elseif($act==='bank.import')$params=['statement'=>$bid];elseif(in_array($act,['bank.match','bank.unmatch'],true))$params=['statement'=>(int)bankRow($db,(int)$user['organization_id'],$bid)['statement_id'],'row'=>$bid,'filter'=>'all'];elseif($act==='bank.reconcile')$params=['statement'=>numberId($form['id'])];
+            $_SESSION['notice']='Банковская операция сохранена.';go('bank',$params);
         case 'accounting.init': case 'accounting.account': case 'accounting.period': case 'accounting.period_edit': case 'accounting.prepare': case 'accounting.approve': case 'accounting.post': case 'accounting.reverse': case 'accounting.close':
             accountingCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Бухгалтерская операция сохранена.'; go('accounting');
         case 'invoice.entity':
@@ -348,6 +358,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'bank':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
+            $data=bankPage($db,$user,optionalId($_GET['account']??''),optionalId($_GET['statement']??''),optionalId($_GET['row']??''),choice($_GET['filter']??'unmatched',['all'=>'','unmatched'=>'','matched'=>'']),optionalId($_GET['after']??''));break;
         case 'accounting':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             $data=accountingPage($db,$user,optionalId($_GET['period']??''),optionalId($_GET['before']??'')); break;

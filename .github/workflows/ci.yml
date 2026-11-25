@@ -65,6 +65,9 @@ jobs:
       - run: php tests/accounting_unit.php
       - run: python3 tests/accounting_schema.py
       - run: php tests/accounting_db.php
+      - run: php tests/bank_unit.php
+      - run: python3 tests/bank_schema.py
+      - run: php tests/bank_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -83,7 +86,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -138,3 +141,5 @@ jobs:
 
       - if: matrix.suite == 'accounting'
         run: php tests/accounting_db.php --postgres
+      - if: matrix.suite == 'bank'
+        run: php tests/bank_db.php --postgres

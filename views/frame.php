@@ -6,7 +6,7 @@ if ($user && !empty($user['organization_id'])) {
     $nav['search']='Поиск';
     if ($user['role']==='owner') $nav['clients']='Клиенты и заказы';
     if (($user['nav_rights']['finance']??can($user,'finance'))) { $nav['finance']='Финансы'; $nav['payments']='Платежи'; $nav['invoices']='Счета'; }
-    if (in_array($user['role'],['owner','accountant'],true)) $nav['accounting']='Бухгалтерия';
+    if (in_array($user['role'],['owner','accountant'],true)) { $nav['accounting']='Бухгалтерия'; $nav['bank']='Банк'; }
     if (($user['nav_rights']['legal']??can($user,'legal'))) $nav['documents']='Документы';
     if (($user['nav_rights']['connections']??can($user,'connections'))) $nav['connections']='Подключения';
     if ($user['nav_rights']['audit']??false) $nav['audit']='Аудит';
