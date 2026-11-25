@@ -178,5 +178,5 @@ function releasePage(PDO $db,array $user,int $project,?int $id): array {
         $eligible=query($db,"SELECT t.id,t.title,l.number FROM tasks t JOIN github_task_links l ON l.task_id=t.id AND l.project_id=t.project_id WHERE t.project_id=? AND t.state='done' AND l.kind='pull' AND l.repository_binding=? ORDER BY t.id LIMIT 100",[$project,$repo['id']])->fetchAll();
         foreach(query($db,"SELECT u.id,u.name FROM users u JOIN organization_members m ON m.user_id=u.id WHERE m.organization_id=? AND u.enabled=1 AND (m.role='owner' OR EXISTS(SELECT 1 FROM project_members pm WHERE pm.project_id=? AND pm.user_id=u.id)) ORDER BY u.name,u.id",[$u['organization_id'],$project])->fetchAll() as $person){try{releaseResponsible($db,$u,$project,(int)$person['id']);$responsibles[]=$person;}catch(Problem){}}
     }
-    return ['project'=>$p,'repository'=>$repo,'releases'=>$rows,'release'=>$r,'releaseTasks'=>$tasks,'eligible'=>$eligible,'responsibles'=>$responsibles,'releaseManage'=>$manage,'evidence'=>$evidence];
+    return ['project'=>$p,'repository'=>$repo,'releases'=>$rows,'release'=>$r,'releaseTasks'=>$tasks,'eligible'=>$eligible,'responsibles'=>$responsibles,'releaseManage'=>$manage,'evidence'=>$evidence,'bookLinks'=>$r?bookReleaseLinks($db,$u,$project,(int)$r['id']):[]];
 }

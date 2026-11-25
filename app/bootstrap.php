@@ -31,3 +31,4 @@ require_once __DIR__ . '/Preparation.php';
 require_once __DIR__ . '/Signing.php';
 require_once __DIR__ . '/Retention.php';
 require_once __DIR__ . '/Engine.php';
+require_once __DIR__ . '/Book.php';
