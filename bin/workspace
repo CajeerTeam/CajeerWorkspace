@@ -30,14 +30,17 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.1.0
+CajeerWorkspace PHP 0.1.1
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
   php bin/workspace user:password EMAIL
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
+  php bin/workspace upgrade
   php bin/workspace sync [подключение]
+  php bin/workspace profile [--check]
+  php bin/workspace protocol ПОДКЛЮЧЕНИЕ [BEFORE_ID]
   php bin/workspace backup /полный/путь/к/новой-копии.sqlite
   php bin/workspace version
 
@@ -56,6 +59,12 @@ try {
         $db = database(true);
         addUser($db,$argv[2],$argv[3],'owner',passwordInput(),true);
         echo "Владелец создан. Можно войти в Workspace.\n";
+        exit(0);
+    }
+    if ($command === 'upgrade') {
+        if ($argc !== 2) throw new Problem('Формат: upgrade');
+        database(false,true);
+        echo "Схема данных обновлена до ".SCHEMA_VERSION.".\n";
         exit(0);
     }
     $db = database();
@@ -95,6 +104,22 @@ try {
             try { $failed = syncConnections($db,$items); }
             finally { flock($lock,LOCK_UN); fclose($lock); }
             exit($failed ? 1 : 0);
+        case 'profile':
+            if ($argc > 3 || ($argc === 3 && $argv[2] !== '--check')) throw new Problem('Формат: profile [--check]');
+            $report=profileReport($db);
+            echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL;
+            exit($argc===3 && $report['issues']!==[] ? 1 : 0);
+        case 'protocol':
+            if ($argc < 3 || $argc > 4 || !preg_match('/\A[a-z][a-z0-9_-]{0,47}\z/',$argv[2])) throw new Problem('Формат: protocol ПОДКЛЮЧЕНИЕ [BEFORE_ID]');
+            $before=isset($argv[3])?numberId($argv[3]):null;
+            $rows=connectionHistory($db,$argv[2],$before,51);
+            if (!isset(connections()[$argv[2]]) && !$rows && !query($db,'SELECT 1 FROM connection_checks WHERE connection_key=? LIMIT 1',[$argv[2]])->fetchColumn()) throw new Problem('Подключение не найдено.');
+            $more=count($rows)>50;
+            $rows=array_slice($rows,0,50);
+            foreach ($rows as &$row) unset($row['target_hash']);
+            unset($row);
+            echo json_encode(['connection'=>$argv[2],'next_before'=>$more?(int)$rows[49]['id']:null,'checks'=>$rows],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL;
+            break;
         case 'backup':
             if ($argc !== 3 || !str_starts_with($argv[2],DIRECTORY_SEPARATOR)) throw new Problem('Укажите абсолютный путь для новой копии.');
             $dir = realpath(dirname($argv[2]));

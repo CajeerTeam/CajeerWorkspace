@@ -110,10 +110,42 @@ try {
     check(connectionViews($db)['docs']['status']==='Данные устарели','Давность снимка');
     file_put_contents($path,'{"docs":{"type":"book","base_url":"https://other.invalid"}}');
     check(connectionViews($db)['docs']['snapshot']===null,'Изменение адреса сбрасывает снимок');
+    $target=connections()['docs'];
+    $good=fn()=>['status'=>'ok','version'=>'2.1.0'];
+    check(syncConnections($db,['docs'=>$target],$good)===0,'Первый опрос');
+    check(syncConnections($db,['docs'=>$target],fn()=>throw new Problem('HTTP 503'))===1,'Отказ');
+    $state=connectionViews($db)['docs'];
+    check($state['status']==='Ошибка' && $state['last_success']['ok']==1 && $state['last_version']['observed_version']==='2.1.0','Последний успех сохраняется при отказе');
+    check(syncConnections($db,['docs'=>$target],$good)===0,'Восстановление');
+    $history=connectionHistory($db,'docs');
+    check(array_column($history,'transition')===['recovered','down','initial'],'Порядок событий');
+    check(count(connectionHistory($db,'docs',(int)$history[0]['id'],1))===1,'Пагинация протокола');
+    check(profileReport($db)['connections']['docs']['latest']['observed_version']==='2.1.0','Профиль API');
+    check(!isset(profileReport($db)['connections']['docs']['env']),'Секреты не попадают в профиль');
+    query($db,'UPDATE connection_checks SET checked_at=? WHERE id=?',[time()-31*86400,$history[1]['id']]);
+    syncConnections($db,['docs'=>$target],$good);
+    check(count(connectionHistory($db,'docs'))===3,'Очистка старого протокола');
+    // Upgrade a genuine schema 1 database with existing business data and its old snapshot.
+    $legacyDir=$temp.'/legacy'; mkdir($legacyDir,0700);
+    $legacy=new \PDO('sqlite:'.$legacyDir.'/workspace.sqlite');
+    $legacy->exec(file_get_contents(ROOT.'/database/001.sql')); $legacy->exec('PRAGMA user_version=1');
+    $legacy->exec("INSERT INTO projects(title,kind) VALUES('Legacy project','internal')");
+    query($legacy,'INSERT INTO connection_results VALUES(?,?,?,?,?)',['docs',$target['hash'],1,'legacy result',time()]);
+    $legacy=null; putenv('WORKSPACE_DATA='.$legacyDir);
+    rejected(fn()=>database(),503,'Старая схема требует явного обновления');
+    $legacy=database(false,true);
+    check((int)$legacy->query('PRAGMA user_version')->fetchColumn()===SCHEMA_VERSION,'Миграция схемы');
+    check($legacy->query('SELECT title FROM projects')->fetchColumn()==='Legacy project','Данные сохранены');
+    $old=connectionHistory($legacy,'docs')[0];
+    check($old['transition']==='legacy' && $old['endpoint']===null && $old['http_status']===null,'Миграция без фиктивных метрик');
+    $legacy=null; $legacy=database(false,true);
+    check(count(connectionHistory($legacy,'docs'))===1,'Повтор обновления безопасен');
+    $legacy=null; putenv('WORKSPACE_DATA='.$temp);
+    foreach (glob($legacyDir.'/*') as $f) unlink($f); rmdir($legacyDir);
     check($db->query('PRAGMA integrity_check')->fetchColumn()==='ok' && !$db->query('PRAGMA foreign_key_check')->fetch(),'Целостность SQLite');
     echo "OK · $checks проверок\n";
 } finally {
     $db=null;
-    foreach (glob($temp.'/*') as $f) unlink($f);
+    foreach (glob($temp.'/*') as $f) { if (is_dir($f)) { foreach (glob($f.'/*') as $child) unlink($child); rmdir($f); } else unlink($f); }
     rmdir($temp);
 }

@@ -200,7 +200,19 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             header('Content-Disposition: attachment; filename="document-'.$id.'-v'.$rev.'.pdf"');
             header('Content-Length: '.strlen($doc['bytes']));
             echo $doc['bytes']; return;
-        case 'connections': $data['items'] = connectionViews($db); break;
+        case 'connections':
+            $report=profileReport($db);
+            $data=['items'=>$report['connections'],'stand'=>$report['stand'],'issues'=>$report['issues'],'instance'=>null,'checks'=>[],'nextBefore'=>null];
+            if (isset($_GET['instance'])) {
+                $id=word($_GET['instance'],48,'Подключение');
+                if (!isset($data['items'][$id])) throw new Problem('Подключение не найдено.',404);
+                $before=isset($_GET['before'])?numberId($_GET['before']):null;
+                $rows=connectionHistory($db,$id,$before,51);
+                $data['instance']=$id;
+                $data['checks']=array_slice($rows,0,50);
+                $data['nextBefore']=count($rows)>50?(int)$rows[49]['id']:null;
+            }
+            break;
         case 'team': $data['members'] = $db->query('SELECT name,email,role,enabled FROM users ORDER BY enabled DESC,name')->fetchAll(); break;
         default: throw new Problem('Страница не найдена.',404);
     }

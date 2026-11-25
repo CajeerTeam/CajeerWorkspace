@@ -17,5 +17,6 @@ jobs:
           coverage: none
       - run: find app public views tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php -l bin/workspace
+      - run: php tests/integration_profiles.php
       - run: php tests/run.php
       - run: python3 tests/web_e2e.py

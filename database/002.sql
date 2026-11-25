@@ -1,0 +1,30 @@
+CREATE TABLE connection_checks (
+    id INTEGER PRIMARY KEY,
+    connection_key TEXT NOT NULL,
+    target_hash TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    ok INTEGER NOT NULL CHECK (ok IN (0,1)),
+    summary TEXT NOT NULL,
+    transition TEXT NOT NULL CHECK (transition IN ('initial','unchanged','down','recovered','legacy')),
+    endpoint TEXT,
+    method TEXT,
+    http_status INTEGER,
+    duration_ms INTEGER CHECK (duration_ms >= 0),
+    observed_version TEXT,
+    version_source TEXT CHECK (version_source IN ('readiness','version_api','panel_api')),
+    version_error TEXT,
+    version_http_status INTEGER,
+    version_duration_ms INTEGER CHECK (version_duration_ms >= 0),
+    version_endpoint TEXT,
+    repository_owner TEXT,
+    repository_branch TEXT,
+    repository_archived INTEGER CHECK (repository_archived IN (0,1))
+);
+CREATE INDEX checks_instance ON connection_checks(connection_key,id DESC);
+CREATE INDEX checks_target_success ON connection_checks(connection_key,target_hash,ok,id DESC);
+CREATE INDEX checks_target_latest ON connection_checks(connection_key,target_hash,id DESC);
+CREATE INDEX checks_instance_time ON connection_checks(connection_key,checked_at);
+CREATE INDEX checks_target_version ON connection_checks(connection_key,target_hash,id DESC) WHERE observed_version IS NOT NULL;
+-- Only the last 0.1.0 result is available. Do not fabricate its URL, timing or version.
+INSERT INTO connection_checks(connection_key,target_hash,checked_at,ok,summary,transition)
+SELECT connection_key,target_hash,checked_at,ok,summary,'legacy' FROM connection_results;

@@ -152,3 +152,6 @@ code { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: any
   .queue-table td:last-child { grid-row: 1; grid-column: 2; justify-self: end; }
   .queue-table td[data-label]::before { content: attr(data-label); display: block; color: var(--mute); font-size: 11px; }
 }
+
+/* Instance profile: addresses may be long; keep the table usable on narrow screens. */
+.connection-url { overflow-wrap:anywhere; word-break:break-word; max-width:26rem; }

@@ -151,6 +151,8 @@ class Provider(BaseHTTPRequestHandler):
     expected = {"engine/health/ready":"ready","forum/health/ready":"ready","book/health/ready":"ok",
                 "lite/health/ready":"ready","logs/ready":"ok","bots/api/health":"ok","servers/api/v1/ready":"ready"}
     fail_book = False
+    panel_key = b"fixture-panel-key"
+    fail_version = False
 
     def log_message(self, *args):
         pass
@@ -167,7 +169,11 @@ class Provider(BaseHTTPRequestHandler):
             return self.reply(503,b'{"status":"unavailable"}')
         status = self.expected.get(self.path.lstrip("/"))
         if status:
-            return self.reply(200,json.dumps({"status":status}).encode())
+            return self.reply(200,json.dumps({"status":status,"version":"1.2.3"}).encode())
+        if self.path == "/book/version":
+            if self.fail_version:
+                return self.reply(503,b'{}')
+            return self.reply(200,b'{"build":{"release":"2.3.4"}}')
         if self.path == "/wrong/health/ready":
             return self.reply(200,b'{"status":"ready"}',"text/html")
         if self.path == "/large/health/ready":
@@ -185,7 +191,7 @@ class Provider(BaseHTTPRequestHandler):
             return self.reply(404,b"{}")
         form = parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
         now = form["request_time"][0]
-        signature = md5((now+md5(b"fixture-panel-key").hexdigest()).encode()).hexdigest()
+        signature = md5((now+md5(self.panel_key).hexdigest()).encode()).hexdigest()
         if abs(int(now)-time.time())>60 or form["request_token"][0] != signature:
             return self.reply(403,b'{"status":false}')
         self.reply(200,b'{"version":"7.0","cpuNum":4,"memTotal":4096}')
@@ -205,17 +211,53 @@ def integrations(tmp, env):
     try:
         url = f"https://127.0.0.1:{server.server_port}"
         config = {key.split("/")[0]:{"base_url":url+"/"+key.split("/")[0]} for key in Provider.expected}
-        config["aapanel"] = {"base_url":url}
+        config["aapanel"] = {"base_url":url,"launch_url":url,"owner":"Ops"}
+        config["_stand"] = {"name":"Test stand","environment":"staging","owner":"Ops"}
+        for name, item in config.items():
+            if name != "_stand":
+                item.setdefault("owner","Ops")
+                item.setdefault("launch_url",url+"/"+name)
+        config["book"].update(version_path="/version",version_field="build.release")
         config_path = tmp/"connections.json"
         config_path.write_text(json.dumps(config))
         env = env | {"WORKSPACE_CONFIG":str(config_path),"WORKSPACE_AAPANEL_KEY":"fixture-panel-key"}
         extra = ("-d","curl.cainfo="+str(ca))
         synced = cli(env,"sync",extra=extra)
         expect(synced.stdout.count("\tOK\t")==8 and "4096" in synced.stdout,"8 real TLS adapter requests")
+        profile=json.loads(cli(env,"profile").stdout)
+        expect(profile["stand"]["name"]=="Test stand" and profile["connections"]["engine"]["latest"]["observed_version"]=="1.2.3","stand profile and actual version")
+        expect(profile["connections"]["book"]["latest"]["observed_version"]=="2.3.4","version API")
+        expect(cli(env,"profile","--check",success=False).returncode==1,"strict profile detects absent GitHub")
         Provider.fail_book = True
         result = cli(env,"sync",success=False,extra=extra)
         expect(result.returncode==1 and "book\tERROR\tHTTP 503" in result.stdout and "servers\tOK" in result.stdout,"isolated outage")
+        profile=json.loads(cli(env,"profile").stdout)
+        book=profile["connections"]["book"]
+        expect(book["latest"]["http_status"]==503 and book["last_success"]["http_status"]==200 and book["last_version"]["observed_version"]=="2.3.4","outage keeps last known version and success")
         Provider.fail_book = False
+        cli(env,"sync","book",extra=extra)
+        protocol=json.loads(cli(env,"protocol","book").stdout)["checks"]
+        expect([row["transition"] for row in protocol]==["recovered","down","initial"],"outage/recovery protocol")
+        expect(all(row["duration_ms"] is not None for row in protocol),"real HTTP timing")
+        Provider.fail_version = True
+        cli(env,"sync","book",extra=extra)
+        book=json.loads(cli(env,"profile").stdout)["connections"]["book"]
+        expect(book["latest"]["ok"]==1 and book["latest"]["version_http_status"]==503 and book["last_version"]["observed_version"]=="2.3.4","separate version outage")
+        Provider.fail_version = False
+        Provider.panel_key=b"rotated-panel-key"
+        expect(cli(env,"sync","aapanel",success=False,extra=extra).returncode==1,"old panel key rejected")
+        rotated=env|{"WORKSPACE_AAPANEL_KEY":"rotated-panel-key"}
+        cli(rotated,"sync","aapanel",extra=extra)
+        panel=json.loads(cli(rotated,"protocol","aapanel").stdout)["checks"]
+        expect(panel[0]["transition"]=="recovered" and panel[1]["http_status"]==403,"key rotation recovery recorded")
+        expect("rotated-panel-key" not in json.dumps(panel) and "fixture-panel-key" not in json.dumps(panel),"credentials excluded")
+        Provider.panel_key=b"fixture-panel-key"
+        with application(env) as root:
+            owner=Browser(root); owner.login("owner")
+            body=owner.call("?p=connections&instance=book")[1].decode()
+            expect("Test stand" in body and "2.3.4" in body and "Восстановление" in body and "HTTP 503" in body,"profile and protocol web UI")
+            viewer=Browser(root); viewer.login("viewer")
+            expect(viewer.call("?p=connections&instance=book")[0]==403,"protocol ACL")
         for key, message in (("redirect","302"),("wrong","Content-Type"),("large","128")):
             config["engine"] = {"base_url":url+"/"+key}
             config_path.write_text(json.dumps(config))
@@ -291,6 +333,7 @@ def run(tmp):
         expect(db.execute("pragma integrity_check").fetchone()==("ok",),"snapshot integrity")
         expect(db.execute("select count(*) from projects").fetchone()==(1,),"snapshot has project")
         expect(db.execute("select count(*) from document_versions").fetchone()==(2,),"snapshot has both PDFs")
+        expect(db.execute("select count(*) from connection_checks").fetchone()[0]>10,"snapshot has connection protocol")
     restored=tmp/"restored"
     restored.mkdir()
     shutil.copy2(backup,restored/"workspace.sqlite")
