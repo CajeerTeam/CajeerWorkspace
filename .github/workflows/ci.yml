@@ -50,6 +50,9 @@ jobs:
       - run: python3 tests/github_schema.py
       - run: php tests/github_db.php
       - run: python3 tests/github_e2e.py
+      - run: php tests/project_release_unit.php
+      - run: python3 tests/project_release_schema.py
+      - run: php tests/project_release_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -68,7 +71,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -111,3 +114,5 @@ jobs:
         run: php tests/oss_db.php --postgres
       - if: matrix.suite == 'github'
         run: php tests/github_db.php --postgres
+      - if: matrix.suite == 'project_release'
+        run: php tests/project_release_db.php --postgres

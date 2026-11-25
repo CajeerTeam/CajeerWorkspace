@@ -71,16 +71,18 @@ final class GitHubApp {
     }
     private function request(string $method,string $path,string $token,?array $body=null): array { return ($this->http)($method,$path,$token,$body); }
     /** Confirm installation belongs to this app, is selected and not suspended. Scope token to one immutable repository ID. */
-    public function access(int $installation,int $repository): array {
+    public function access(int $installation,int $repository,bool $contents=false): array {
         $jwt=ghJwt($this->app,$this->pem);
         $info=$this->request('GET','/app/installations/'.$installation,$jwt);
         if (ghId($info['id']??null)!==$installation||ghId($info['app_id']??null)!==(int)$this->app||($info['repository_selection']??'')!=='selected'||!array_key_exists('suspended_at',$info)||$info['suspended_at']!==null) throw new GitHubFailure(403);
-        $token=$this->request('POST','/app/installations/'.$installation.'/access_tokens',$jwt,['repository_ids'=>[$repository],'permissions'=>['metadata'=>'read','issues'=>'read','pull_requests'=>'read','checks'=>'read','statuses'=>'read']]);
+        $requested=['metadata'=>'read','issues'=>'read','pull_requests'=>'read','checks'=>'read','statuses'=>'read'];
+        if ($contents) $requested['contents']='read';
+        $token=$this->request('POST','/app/installations/'.$installation.'/access_tokens',$jwt,['repository_ids'=>[$repository],'permissions'=>$requested]);
         $value=$token['token']??null; $expires=is_string($token['expires_at']??null)?strtotime($token['expires_at']):false;
         if (!is_string($value)||!preg_match('/\A[A-Za-z0-9._~+\/=\-]{10,4096}\z/',$value)||$expires===false||$expires<=time()+180||$expires>time()+3700) throw new GitHubFailure(502);
         $permissions=$token['permissions']??null;
         if (!is_array($permissions)) throw new GitHubFailure(502);
-        foreach (['metadata','issues','pull_requests','checks','statuses'] as $permission) if (($permissions[$permission]??null)!=='read') throw new GitHubFailure(403);
+        foreach (array_keys($requested) as $permission) if (($permissions[$permission]??null)!=='read') throw new GitHubFailure(403);
         foreach($permissions as $permission=>$level) if($level!=='read') throw new GitHubFailure(403);
         $repos=$token['repositories']??[];
         if (!is_array($repos)||count($repos)!==1||ghId($repos[0]['id']??null)!==$repository) throw new GitHubFailure(403);
@@ -88,6 +90,11 @@ final class GitHubApp {
         $selected=$listing['repositories']??null;
         if (($listing['total_count']??null)!==1||!is_array($selected)||count($selected)!==1||ghId($selected[0]['id']??null)!==$repository) throw new GitHubFailure(403);
         return ['name'=>ghName($selected[0]['full_name']??null),'repository'=>$repository,'token'=>$value,'expires'=>$expires];
+    }
+    /** Release reads are scoped to the repository returned by access(). */
+    public function releaseRead(array $access,string $suffix): array {
+        $base='/repos/'.implode('/',array_map('rawurlencode',explode('/',ghName($access['name']))));
+        return $this->request('GET',$base.$suffix,$access['token']);
     }
     public function snapshot(array $access,string $kind,int $number): array {
         if (!in_array($kind,['issue','pull'],true)) throw new \LogicException('Invalid kind');

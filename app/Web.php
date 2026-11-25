@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,13 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'release.create': case 'release.verify': case 'release.confirm': case 'release.cancel':
+            $pid=$projectId();
+            if($act==='release.create') $id=releaseCreate($db,$user,$pid,$key,$_POST);
+            else { $id=numberId($_POST['id']??0); $version=numberId($_POST['version']??0);
+                if($act==='release.cancel') releaseCancel($db,$user,$pid,$id,$version);
+                else { releaseManager($db,$user,$pid); releaseInspect($db,$user,$pid,$id,$version,$act==='release.confirm',GitHubApp::configured()); } }
+            $_SESSION['notice']='Выпуск сохранён.'; go('releases',['project'=>$pid,'id'=>$id]);
         case 'github.link': case 'github.unlink': case 'github.sync': case 'github.disable':
             $pid=$projectId(); ghManage($db,$user,$pid,$act,$_POST); $_SESSION['notice']='Изменения GitHub сохранены.';
             if (in_array($act,['github.link','github.unlink'],true)) go('task',['id'=>numberId($_POST['task_id']??0)]);
@@ -321,6 +328,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'releases':
+            $data=releasePage($db,$user,numberId($_GET['project']??0),optionalId($_GET['id']??'')); break;
         case 'github':
             $data=ghPage($db,$user,numberId($_GET['project']??0)); break;
         case 'oss':
@@ -363,6 +372,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $t=planningTask($db,$user,numberId($_GET['id']??0)); $pid=(int)$t['project_id'];
             $data=['task'=>$t,'projectRole'=>projectRole($db,$user,$pid),'dependencies'=>planningDependencies($db,$user,(int)$t['id']),'blocked'=>blockedTask($db,$pid,(int)$t['id'])];
             $data['github']=ghTaskData($db,$user,$pid,(int)$t['id']);
+            $data['taskReleases']=roleAllows($data['projectRole'],'connections')?query($db,'SELECT r.id,r.tag,r.state FROM project_release_tasks rt JOIN project_releases r ON r.id=rt.release_id AND r.project_id=rt.project_id WHERE rt.project_id=? AND rt.task_id=? ORDER BY r.id DESC LIMIT 100',[$pid,$t['id']])->fetchAll():[];
             $data['ossConfig']=query($db,'SELECT upstream FROM oss_projects WHERE project_id=?',[$pid])->fetch()?:null;
             $data['ossLink']=query($db,'SELECT upstream_url FROM oss_task_links WHERE project_id=? AND task_id=?',[$pid,$t['id']])->fetchColumn()?:null;
             if (roleAllows($data['projectRole'],'manage')) {

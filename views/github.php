@@ -1,5 +1,5 @@
 <?php namespace Workspace; $pid=(int)$project['id']; $repo=$repository; ?>
-<p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($project['title']) ?></a></p>
+<p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($project['title']) ?></a> · <a href="<?= h(url('releases',['project'=>$pid])) ?>">Выпуски проекта</a></p>
 <?php if (!$repo): ?><section class="panel"><h2>GitHub App не подключён</h2><p>Установите приложение GitHub только на выбранные репозитории. Оператор подтверждает привязку repository ID к этому проекту (CLI github:bind). ID проекта: <?= $pid ?>.</p></section><?php else: ?>
 <section class="panel"><h2><?= h($repo['full_name']) ?></h2><p>Repository ID: <?= (int)$repo['repository_id'] ?> · Installation ID: <?= (int)$repo['installation_id'] ?> · <?= (int)$repo['active']?'Активно':'Отключено' ?></p>
 <p>Последняя проверка: <?= $repo['checked_at']?h(gmdate('Y-m-d H:i:s',(int)$repo['checked_at'])).' UTC':'—' ?></p>
