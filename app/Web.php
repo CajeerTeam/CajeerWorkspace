@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -87,6 +87,19 @@ function pageView(string $view, string $title, ?array $user = null, array $data 
 function handlePost(PDO $db, ?array $user): never {
     if (!isset($_POST['csrf']) || !is_string($_POST['csrf']) || !hash_equals($_SESSION['csrf'],$_POST['csrf'])) throw new Problem('Срок действия формы истёк. Обновите страницу.',403);
     $act = word($_POST['act'] ?? '',32,'Действие');
+    if (isset($_SESSION['oss_contributor'])) {
+        if ($act==='oss.logout') { killLogin(); go('oss.join'); }
+        if (!in_array($act,['oss.submit','oss.reply'],true)) throw new Problem('Действие недоступно contributor.',403);
+        $c=ossSession($db); authThrottle($db,'oss.write:'.$c['id'],60);
+        $id=ossExternal($db,(int)$c['id'],$_SESSION['oss_grant'],word($_POST['request_key']??'',32,'Форма'),$act,$_POST);
+        go('oss.contributor',['id'=>$id]);
+    }
+    if ($act==='oss.join') {
+        if ($user || !empty($_SESSION['guest_id'])) throw new Problem('Выйдите из текущей учётной записи.',403);
+        authThrottle($db,'oss.join:'.($_SERVER['REMOTE_ADDR']??''),12);
+        $c=ossRedeem($db,$_POST['token']??''); killLogin();
+        $_SESSION['oss_contributor']=(int)$c['id']; $_SESSION['oss_grant']=$c['grant']; $_SESSION['oss_seen']=time(); go('oss.contributor');
+    }
     if (!empty($_SESSION['guest_id'])) {
         if ($act==='logout') authLogout($db);
         if (in_array($act,['guest.offer','guest.delivery'],true)) {
@@ -124,18 +137,26 @@ function handlePost(PDO $db, ?array $user): never {
         if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
         $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
         if (!$user) { go('login'); }
-        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
+        $_SESSION['org']=$result['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
     }
     if (!$user) go('login');
     if ($act==='logout') authLogout($db);
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
-    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'oss.invite': case 'oss.reissue':
+            $pid=$projectId(); $token=ossIssue($db,$user,$pid,$_POST['display_name']??'',workloadInt($_POST['hours']??null,1,168),$key,$act==='oss.reissue'?numberId($_POST['contributor_id']??0):null);
+            // One-time display, bound to both actor and project.
+            $_SESSION['oss_token']=['project'=>$pid,'actor'=>(int)$user['id'],'token'=>$token]; go('oss',['project'=>$pid]);
+        case 'oss.settings': case 'oss.milestone': case 'oss.revoke': case 'oss.link': case 'oss.triage': case 'oss.comment': case 'oss.release':
+            $pid=$projectId(); $form=$_POST; unset($form['csrf'],$form['request_key'],$form['act']); ossCommand($db,$user,$key,$pid,$act,$form);
+            if ($act==='oss.link') go('task',['id'=>numberId($_POST['task_id']??0)]);
+            go('oss',['project'=>$pid]+(in_array($act,['oss.triage','oss.comment'],true)?['id'=>numberId($_POST['id']??0)]:[]));
         case 'client.party': case 'client.contact': case 'client.request': case 'client.offer': case 'client.offer.edit': case 'client.stage': case 'client.stage.remove': case 'client.publish': case 'client.task': case 'client.deliver':
             $oid=clientCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Изменения сохранены.'; go('clients',in_array($act,['client.party','client.contact'],true)?[]:['id'=>$oid]);
         case 'client.invite':
@@ -165,7 +186,7 @@ function handlePost(PDO $db, ?array $user): never {
         case 'guest.revoke':
             revokeGuest($db,$user,$projectId(),numberId($_POST['guest_id']??0)); go('project',['id'=>$projectId()]);
         case 'org.create':
-            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
+            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
         case 'org.rename':
             renameOrganization($db,$user,word($_POST['name']??'',120,'Организация')); go('team');
         case 'team.rename': case 'team.delete':
@@ -256,6 +277,16 @@ function sendCsv(PDO $db,array $user): never {
 }
 
 function dispatch(PDO $db, ?array $user, string $page): void {
+    if ($page==='oss.public' || $page==='oss.export') {
+        $data=ossPublicData($db,word($_GET['slug']??'',80,'Адрес'),numberId($_GET['n']??1));
+        if ($page==='oss.export') { header('Content-Type: application/json; charset=utf-8'); header('Content-Disposition: attachment; filename="oss-history.json"'); echo json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT); return; }
+        pageView('oss_public',$data['project']['public_title'],null,$data); return;
+    }
+    if (isset($_SESSION['oss_contributor'])) {
+        if ($page!=='oss.contributor') go('oss.contributor');
+        $c=ossSession($db); pageView('oss_contributor','Кабинет contributor',null,ossContributorPage($db,$c,optionalId($_GET['id']??''),numberId($_GET['n']??1))); return;
+    }
+    if ($page==='oss.join') { if ($user || !empty($_SESSION['guest_id'])) throw new Problem('Выйдите из текущей учётной записи или откройте отдельный браузер.',403); pageView('oss_join','Вход contributor'); return; }
     if (!empty($_SESSION['guest_id'])) { guestPage($db,$page); return; }
     if ($page==='guest.join' && !$user && oidcEnabled()) { pageView('guest_join','Приглашение клиента'); return; }
     if ($user && ($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false) && $page!=='security') go('security');
@@ -286,6 +317,11 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'oss':
+            $pid=numberId($_GET['project']??0); $data=ossAdminPage($db,$user,$pid,optionalId($_GET['id']??''),numberId($_GET['n']??1),word($_GET['state']??'',20,'Статус',false));
+            $token=$_SESSION['oss_token']??null; unset($_SESSION['oss_token']);
+            if (is_array($token) && $token['project']===$pid && $token['actor']===(int)$user['id']) $data['inviteToken']=$token['token'];
+            break;
         case 'clients':
             $id=optionalId($_GET['id']??''); $data=clientsPage($db,$user,$id,numberId($_GET['n']??1));
             if ($id!==null && ($_SESSION['client_token_order']??null)===$id) { $data['clientToken']=$_SESSION['client_token']??null; unset($_SESSION['client_token'],$_SESSION['client_token_order']); }
@@ -320,6 +356,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'task':
             $t=planningTask($db,$user,numberId($_GET['id']??0)); $pid=(int)$t['project_id'];
             $data=['task'=>$t,'projectRole'=>projectRole($db,$user,$pid),'dependencies'=>planningDependencies($db,$user,(int)$t['id']),'blocked'=>blockedTask($db,$pid,(int)$t['id'])];
+            $data['ossConfig']=query($db,'SELECT upstream FROM oss_projects WHERE project_id=?',[$pid])->fetch()?:null;
+            $data['ossLink']=query($db,'SELECT upstream_url FROM oss_task_links WHERE project_id=? AND task_id=?',[$pid,$t['id']])->fetchColumn()?:null;
             if (roleAllows($data['projectRole'],'manage')) {
                 $data['assignable']=[];
                 foreach (planningPeople($db,$user,$pid) as $uid=>$name) if (roleAllows(projectRole($db,['id'=>$uid,'organization_id'=>$user['organization_id']],$pid),'work')) $data['assignable'][$uid]=$name;
@@ -411,7 +449,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
             if ($user['role']==='owner') {
                 $data['invitations']=query($db,'SELECT id,email,role,expires_at,accepted_at,revoked_at FROM invitations WHERE organization_id=? ORDER BY id DESC LIMIT 100',[$user['organization_id']])->fetchAll();
-                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']);
+                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']);
             }
             break;
         default: throw new Problem('Страница не найдена.',404);

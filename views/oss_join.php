@@ -1,0 +1,2 @@
+<?php namespace Workspace; ?>
+<div class="loginwrap"><div class="loginbox"><h1>Вход contributor</h1><p>Введите одноразовый код, полученный от maintainer проекта. Он открывает только кабинет внешнего участника.</p><form method="post" class="stack"><?php formFields('oss.join') ?><label>Код<input name="token" required maxlength="64" pattern="[a-f0-9]{64}" autocomplete="off"></label><button class="primary">Войти</button></form><p><a href="<?= h(url('login')) ?>">Внутренний вход</a></p></div></div>

@@ -43,6 +43,9 @@ jobs:
       - run: python3 tests/clients_schema.py
       - run: php tests/clients_db.php
       - run: python3 tests/clients_e2e.py
+      - run: python3 tests/oss_schema.py
+      - run: php tests/oss_db.php
+      - run: python3 tests/oss_e2e.py
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -61,7 +64,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -100,3 +103,5 @@ jobs:
         run: php tests/workload_db.php --postgres
       - if: matrix.suite == 'clients'
         run: php tests/clients_db.php --postgres
+      - if: matrix.suite == 'oss'
+        run: php tests/oss_db.php --postgres

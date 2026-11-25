@@ -9,4 +9,4 @@
 <label>Почта<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
 <label>Пароль<input name="password" type="password" autocomplete="current-password" required></label>
 <button class="primary">Войти</button></form><?php endif ?>
-<p><a href="<?= h(url('invite')) ?>">Приглашение сотрудника</a></p></div></div>
+<p><a href="<?= h(url('invite')) ?>">Приглашение сотрудника</a> · <a href="<?= h(url('oss.join')) ?>">Вход contributor</a></p></div></div>
