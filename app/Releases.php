@@ -99,7 +99,7 @@ function releaseCI(callable $read,string $sha,array $required): array {
     if(($status['sha']??null)!==$sha||!is_int($count)||$count<0||($count>0&&($status['state']??null)!=='success'))throw new Problem('Commit Status не подтверждён.',409);
     return ['checks'=>array_values($checks),'commit_status'=>['count'=>$count,'state'=>$count===0?'none':'success']];
 }
-function releaseRemote(callable $read,array $r,array $tasks,int $repository): array {
+function releaseRemote(callable $read,array $r,array $tasks,int $repository,?string &$phase=null): array {
     $sha=releaseSha($r['commit_sha']);$tag=releaseTag($r['tag']);$ref=releaseResolveTag($read,$tag);
     if($ref['commit_sha']!==$sha)throw new Problem('Тег указывает на другой commit SHA.',409);
     $prs=[];$taskEvidence=[];
@@ -112,7 +112,7 @@ function releaseRemote(callable $read,array $r,array $tasks,int $repository): ar
         }
         $taskEvidence[]=['task_id'=>(int)$t['task_id'],'task_version'=>(int)$t['task_version'],'link_version'=>(int)$t['link_version'],'pr'=>$prs[$n]];
     }
-    $ci=releaseCI($read,$sha,json_decode($r['required_checks'],true,32,JSON_THROW_ON_ERROR));
+    $phase='ci';$ci=releaseCI($read,$sha,json_decode($r['required_checks'],true,32,JSON_THROW_ON_ERROR));$phase='release';
     $remote=$read('/releases/tags/'.rawurlencode($tag));$rid=ghId($remote['id']??null);
     if(($remote['tag_name']??null)!==$tag||($remote['draft']??null)!==false||!is_string($remote['published_at']??null)||strtotime($remote['published_at'])===false||releaseNotes($remote['body']??null)!==$r['changelog'])throw new Problem('GitHub Release не опубликован или changelog не совпадает.',409);
     $asset=null;$seen=[];$complete=false;
@@ -130,12 +130,13 @@ function releaseRemote(callable $read,array $r,array $tasks,int $repository): ar
     $a=$read('/releases/assets/'.$asset['id']);if(ghId($a['id']??null)!==$asset['id']||($a['name']??null)!==$asset['name']||($a['state']??null)!=='uploaded'||($a['digest']??null)!=='sha256:'.$asset['sha256']||($a['size']??null)!==$asset['size'])throw new Problem('Артефакт изменился во время проверки.',409);
     return ['repository_id'=>$repository,'tag'=>$tag,'ref'=>$ref,'tasks'=>$taskEvidence,'ci'=>$ci,'release'=>['id'=>$rid,'published_at'=>$remote['published_at'],'changelog_sha256'=>hash('sha256',$r['changelog'])],'artifact'=>$asset];
 }
-function releaseFailure(PDO $db,array $user,int $project,int $id,int $version,Problem $error): void {
-    atomic($db,function()use($db,$user,$project,$id,$version,$error){
+function releaseFailure(PDO $db,array $user,int $project,int $id,int $version,Problem $error,?string $phase=null): void {
+    atomic($db,function()use($db,$user,$project,$id,$version,$error,$phase){
         $u=releaseManager($db,$user,$project);$r=releaseRow($db,$project,$id);
         if((int)$r['version']!==$version||!in_array($r['state'],['draft','verified'],true))return;
         query($db,"UPDATE project_releases SET state='draft',last_error=?,version=version+1 WHERE id=?",[$error->getMessage(),$id]);
         auditEvent($db,$u,$project,'release.failed',$id);
+        if($phase==='ci')logsEnqueue($db,(int)$u['organization_id'],$project,'release.ci_failed',$id,null,$id);
     });
 }
 function releaseInspect(PDO $db,array $user,int $project,int $id,int $version,bool $confirm,GitHubApp $app): void {
@@ -146,11 +147,11 @@ function releaseInspect(PDO $db,array $user,int $project,int $id,int $version,bo
         if($confirm&&((int)$r['responsible_id']!==(int)$u['id']||$r['state']!=='verified'||(int)$r['verified_at']<time()-RELEASE_VERIFY_TTL))throw new Problem('Подтвердить может назначенный ответственный после свежей проверки.',403);
         releaseResponsible($db,$u,$project,(int)$r['responsible_id']);return [$r,releaseRepo($db,$r),releaseTaskRows($db,$r)];});
     if($repo===null)return;
-    $started=microtime(true);
+    $started=microtime(true);$phase=null;
     try{$access=$app->access((int)$repo['installation_id'],(int)$repo['repository_id'],true);
         $read=static function(string $path)use($app,$access,$started):array{if(microtime(true)-$started>75||time()>=$access['expires']-30)throw new Problem('Превышен бюджет проверки GitHub. Повторите позже.',503);return $app->releaseRead($access,$path);};
-        $evidence=releaseRemote($read,$r,$tasks,(int)$repo['repository_id']);
-    }catch(GitHubFailure $e){$error=new Problem('Не удалось проверить выпуск: GitHub HTTP '.$e->http.'. Проверьте Contents: read и доступ к репозиторию.',503);releaseFailure($db,$user,$project,$id,$version,$error);throw $error;}catch(Problem $e){releaseFailure($db,$user,$project,$id,$version,$e);throw $e;}
+        $evidence=releaseRemote($read,$r,$tasks,(int)$repo['repository_id'],$phase);
+    }catch(GitHubFailure $e){$error=new Problem('Не удалось проверить выпуск: GitHub HTTP '.$e->http.'. Проверьте Contents: read и доступ к репозиторию.',503);releaseFailure($db,$user,$project,$id,$version,$error,$phase);throw $error;}catch(Problem $e){releaseFailure($db,$user,$project,$id,$version,$e,$phase);throw $e;}
     if(isset($_SESSION['uid'])) requireMfa($confirm?'release.confirm':'release.verify');
     $json=json_encode($evidence,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);$hash=hash('sha256',$json);
     $changed=atomic($db,function()use($db,$user,$project,$id,$version,$confirm,$r,$json,$hash){$u=releaseManager($db,$user,$project);$now=releaseRow($db,$project,$id);

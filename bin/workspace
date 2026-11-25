@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.7.4
+CajeerWorkspace PHP 0.8.0
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -69,6 +69,8 @@ CajeerWorkspace PHP 0.7.4
   php bin/workspace lite:work JOB_ID
   php bin/workspace lite:restore JOB_ID --offline
   php bin/workspace lite:reconcile JOB_ID [--offline]
+  php bin/workspace logs:tick [LIMIT]
+  php bin/workspace logs:prune
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -139,6 +141,10 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'logs:tick':
+            if($argc>3)throw new Problem('Формат: logs:tick [LIMIT]');echo json_encode(logsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
+        case 'logs:prune':
+            if($argc!==2)throw new Problem('Формат: logs:prune');echo json_encode(['pruned'=>logsPrune($db)],JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'lite:inspect': case 'lite:work': case 'lite:restore': case 'lite:reconcile':
             require ROOT.'/app/LiteWorker.php';
             $offline=($argv[3]??'')==='--offline';

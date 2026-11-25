@@ -1,0 +1,44 @@
+-- Opt-in, project-scoped operational telemetry. Never export audit detail or arbitrary context.
+CREATE TABLE logs_bindings (
+ project_id INTEGER PRIMARY KEY,
+ organization_id INTEGER NOT NULL,
+ origin TEXT NOT NULL,
+ remote_project TEXT NOT NULL CHECK(length(remote_project)=36),
+ remote_source TEXT NOT NULL CHECK(length(remote_source)=36),
+ source_slug TEXT NOT NULL,
+ identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
+ namespace TEXT NOT NULL UNIQUE CHECK(length(namespace)=32),
+ retention_days INTEGER NOT NULL CHECK(retention_days BETWEEN 1 AND 365),
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ updated_at INTEGER NOT NULL,
+ UNIQUE(origin,remote_project), UNIQUE(project_id,organization_id),
+ FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id)
+);
+CREATE TABLE logs_outbox (
+ id INTEGER PRIMARY KEY,
+ project_id INTEGER NOT NULL,
+ organization_id INTEGER NOT NULL,
+ event_key TEXT NOT NULL UNIQUE CHECK(length(event_key)=32),
+ correlation_id TEXT NOT NULL CHECK(length(correlation_id)=32),
+ event TEXT NOT NULL,
+ object_id INTEGER NOT NULL CHECK(object_id>0),
+ environment TEXT CHECK(environment IN ('dev','staging','prod')),
+ release_id INTEGER,
+ host_id INTEGER,
+ created_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL CHECK(expires_at>created_at),
+ available_at INTEGER NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','sending','delivered','failed','expired')),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0),
+ claim TEXT,
+ lease_until INTEGER,
+ credential_hash TEXT,
+ remote_event TEXT,
+ error_code TEXT NOT NULL DEFAULT '',
+ CHECK((state='sending' AND claim IS NOT NULL AND lease_until IS NOT NULL) OR (state!='sending' AND claim IS NULL AND lease_until IS NULL)),
+ CHECK((state='delivered' AND remote_event IS NOT NULL) OR (state!='delivered' AND remote_event IS NULL)),
+ FOREIGN KEY(project_id,organization_id) REFERENCES logs_bindings(project_id,organization_id),
+ FOREIGN KEY(release_id,project_id) REFERENCES project_releases(id,project_id)
+);
+CREATE INDEX logs_outbox_due ON logs_outbox(state,available_at,id);
+CREATE INDEX logs_outbox_project ON logs_outbox(project_id,id);

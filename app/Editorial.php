@@ -27,6 +27,7 @@ function editorialEvent(PDO $db,array $u,array $r,string $step,string $state,str
     if($last&&$last['state']===$state&&$last['detail']===$detail)return;
     query($db,'INSERT INTO editorial_events(project_id,editorial_id,actor_id,step,state,detail,created_at) VALUES(?,?,?,?,?,?,?)',[$r['project_id'],$r['id'],$u['id'],$step,$state,$detail,time()]);
     auditEvent($db,$u,(int)$r['project_id'],'editorial.'.$step,(int)$r['id'],$state);
+    if(in_array($step,['cms','forum'],true)&&in_array($state,['conflict','uncertain','rejected','blocked','aborted','restore_uncertain'],true))logsEnqueue($db,(int)$u['organization_id'],(int)$r['project_id'],'editorial.'.$step.'.failed',(int)$r['id'],null,(int)$r['release_id']);
 }
 function editorialKey(array $r,string $purpose): string {return substr(hash('sha256','editorial:'.$r['project_id'].':'.$r['id'].':'.$r['request_key'].':'.$purpose),0,32);}
 function editorialCreate(PDO $db,array $u,int $project,string $request,array $f): int {

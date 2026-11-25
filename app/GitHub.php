@@ -283,6 +283,8 @@ function ghFinish(PDO $db,array $job,?array $access,?array $snapshot,?\Throwable
         $status=$error instanceof GitHubFailure?$error->http:0;
         $retryAt=$error instanceof GitHubFailure?$error->retryAt:0;
         $reason=$status?'GitHub API: HTTP '.$status:'Ошибка проверки или транспорта GitHub';
+        $org=(int)entity($db,'SELECT organization_id FROM projects WHERE id=?',[$repo['project_id']])['organization_id'];
+        logsEnqueue($db,$org,(int)$repo['project_id'],'github.sync.failed',(int)$job['id']);
         // Access loss must hide all cached repository data. 404 on a linked item alone does not revoke the repository.
         if($access===null && $status===404) {ghDeactivate($db,$repo,'GitHub: installation or repository no longer accessible'); return 'cancelled';}
         if($access===null) {

@@ -91,6 +91,17 @@ jobs:
       - run: php tests/forum_db.php
       - run: python3 tests/editorial_schema.py
       - run: php tests/editorial_db.php
+      - run: python3 tests/logs_schema.py
+      - run: php tests/logs_db.php
+      - if: matrix.php == '8.4'
+        uses: actions/checkout@v4
+        with:
+          repository: CajeerTeam/CajeerLogs
+          ref: ec686ab677149de5472e207c3aa6a1f6f9392a75
+          path: .ci-logs
+          persist-credentials: false
+      - if: matrix.php == '8.4'
+        run: php tests/logs_wire.php .ci-logs
       - run: python3 tests/lite_schema.py
       - uses: actions/checkout@v4
         with:
@@ -117,7 +128,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -196,6 +207,8 @@ jobs:
         run: php tests/forum_db.php --postgres
       - if: matrix.suite == 'editorial'
         run: php tests/editorial_db.php --postgres
+      - if: matrix.suite == 'logs'
+        run: php tests/logs_db.php --postgres
       - if: matrix.suite == 'lite'
         uses: actions/checkout@v4
         with:

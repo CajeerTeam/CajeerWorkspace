@@ -44,6 +44,7 @@ function hasProjectRight(PDO $db,array $user,string $right): bool {
 }
 function auditEvent(PDO $db,array $u,?int $project,string $event,int $object,string $detail=''): void {
     query($db,'INSERT INTO audit_events(organization_id,project_id,actor_id,event,object_id,detail) VALUES(?,?,?,?,?,?)',[$u['organization_id'],$project,$u['id'],$event,$object,$detail]);
+    logsAudit($db,$u,$project,$event,$object);
 }
 function changeProjectRole(PDO $db,array $user,int $project,int $uid,string $role): void {
     choice($role,PROJECT_ROLES);

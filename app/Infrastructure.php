@@ -128,6 +128,7 @@ function infraSync(PDO $db,array $user,int $id,?callable $read=null,bool $cli=fa
             if($r['data']!==null) query($db,'INSERT INTO infra_observations(host_id,source,attempt_at,success_at,snapshot,error) VALUES(?,?,?,?,?,?) ON CONFLICT(host_id,source) DO UPDATE SET attempt_at=excluded.attempt_at,success_at=excluded.success_at,snapshot=excluded.snapshot,error=excluded.error',[$id,$source,$started,time(),json_encode($r['data'],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),'']);
             else query($db,'INSERT INTO infra_observations(host_id,source,attempt_at,error) VALUES(?,?,?,?) ON CONFLICT(host_id,source) DO UPDATE SET attempt_at=excluded.attempt_at,error=excluded.error',[$id,$source,$started,$r['error']]);
             auditEvent($db,$u,null,'infra.sync',$id,($cli?'cli:':'web:').$source.':'.($r['data']!==null?'ok':'error'));
+            logsHost($db,(int)$u['organization_id'],$id,$source,$r['data']!==null);
         } query($db,'UPDATE infra_hosts SET sync_token=NULL WHERE id=?',[$id]); return infraReadObs($db,$id);
     });
 }
