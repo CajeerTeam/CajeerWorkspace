@@ -61,7 +61,7 @@ function connectionConfig(?string $file = null): array {
         $base = trustedUrl($options['base_url'] ?? null,$type === 'aapanel');
         if ($type === 'github' && $base !== null) throw new RuntimeException('Адрес GitHub API задан адаптером.');
         $env = $options['secret_env'] ?? ($type === 'aapanel' ? 'WORKSPACE_AAPANEL_KEY' : ($type === 'github' ? 'WORKSPACE_GITHUB_TOKEN' : null));
-        if ($env !== null && (!in_array($type,['aapanel','github','servers'],true) || !is_string($env) || !preg_match('/\AWORKSPACE_[A-Z0-9_]{1,80}\z/',$env))) throw new RuntimeException('Проверьте имя переменной с ключом.');
+        if ($env !== null && (!in_array($type,['aapanel','github','servers','engine'],true) || !is_string($env) || !preg_match('/\AWORKSPACE_[A-Z0-9_]{1,80}\z/',$env))) throw new RuntimeException('Проверьте имя переменной с ключом.');
         $launch = trustedUrl($options['launch_url'] ?? null,$type === 'aapanel') ?? ($repo ? 'https://github.com/'.$repo : null);
         $versionPath = $options['version_path'] ?? null;
         $versionField = $options['version_field'] ?? 'version';

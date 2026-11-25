@@ -83,6 +83,8 @@ jobs:
       - run: php tests/signing_db.php
       - run: python3 tests/retention_schema.py
       - run: php tests/retention_db.php
+      - run: python3 tests/engine_schema.py
+      - run: php tests/engine_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -101,7 +103,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -172,3 +174,5 @@ jobs:
         run: php tests/signing_db.php --postgres
       - if: matrix.suite == 'retention'
         run: php tests/retention_db.php --postgres
+      - if: matrix.suite == 'engine'
+        run: php tests/engine_db.php --postgres

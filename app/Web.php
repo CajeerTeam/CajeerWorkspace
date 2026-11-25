@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,17 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'engine.bind':
+            $pid=$projectId();$site=engineBind($db,$user,$pid,word($_POST['connection']??'',48,'Подключение'),word($_POST['name']??'',120,'Сайт'));go('engine',['project'=>$pid,'site'=>$site]);
+        case 'engine.toggle':
+            $pid=$projectId();$site=numberId($_POST['site_id']??0);engineToggle($db,$user,$pid,$site,choice($_POST['active']??'', ['0'=>'off','1'=>'on'])==='1');go('engine',['project'=>$pid]);
+        case 'engine.prepare':
+            $pid=$projectId();$id=enginePrepare($db,$user,$pid,numberId($_POST['site_id']??0),engineSegment($_POST['type']??null),engineSegment($_POST['entry']??null),numberId($_POST['revision']??0),word($_POST['hash']??'',64,'SHA-256'));go('engine',['project'=>$pid,'publication'=>$id]);
+        case 'engine.confirm': case 'engine.reconcile': case 'engine.cancel':
+            $pid=$projectId();$id=numberId($_POST['publication']??0);
+            if($act==='engine.confirm'){if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите публикацию.');engineConfirm($db,$user,$pid,$id,word($_POST['hash']??'',64,'SHA-256'));}
+            elseif($act==='engine.reconcile')engineReconcile($db,$user,$pid,$id);else engineCancel($db,$user,$pid,$id);
+            go('engine',['project'=>$pid,'publication'=>$id]);
         case 'retention.policy': case 'retention.assign': case 'retention.hold': case 'retention.release': case 'retention.offload': case 'retention.restore': case 'retention.purge': case 'retention.link': case 'retention.revoke':
             orgOwner($db,$user);if($act==='retention.policy'){retentionPolicy($db,$user,$_POST);go('retention');}
             $doc=numberId($_POST['document_id']??0);$rev=numberId($_POST['revision']??0);$package=optionalId($_POST['package_id']??'');
@@ -377,6 +388,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'engine':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=enginePage($db,$user,$projectId,$_GET);break;
         case 'retention':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=retentionPage($db,$user,optionalId($_GET['id']??''),optionalId($_GET['v']??''),optionalId($_GET['before']??''),optionalId($_GET['log_before']??''));break;
         case 'signing':

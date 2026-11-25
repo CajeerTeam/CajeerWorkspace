@@ -6,6 +6,7 @@
   },
   "engine": {
     "base_url": null,
+    "secret_env": "WORKSPACE_ENGINE_TOKEN",
     "launch_url": null,
     "owner": "",
     "installed_version": null
