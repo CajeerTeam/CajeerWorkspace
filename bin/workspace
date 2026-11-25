@@ -30,14 +30,16 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.1.1
+CajeerWorkspace PHP 0.1.2
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
   php bin/workspace user:password EMAIL
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
-  php bin/workspace upgrade
+  php bin/workspace doctor
+  php bin/workspace upgrade [/абсолютный/путь/к/копии.sqlite]
+  php bin/workspace migrations
   php bin/workspace sync [подключение]
   php bin/workspace profile [--check]
   php bin/workspace protocol ПОДКЛЮЧЕНИЕ [BEFORE_ID]
@@ -61,10 +63,37 @@ try {
         echo "Владелец создан. Можно войти в Workspace.\n";
         exit(0);
     }
+    if ($command === 'doctor') {
+        if ($argc !== 2) throw new Problem('Формат: doctor');
+        $report=runtimeReport();
+        echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
+        exit($report['ok']?0:1);
+    }
     if ($command === 'upgrade') {
-        if ($argc !== 2) throw new Problem('Формат: upgrade');
-        database(false,true);
+        if ($argc > 3) throw new Problem('Формат: upgrade [абсолютный путь копии]');
+        database(false,true,$argv[2]??null,static function(array $backup) {
+            echo 'Предварительная копия: ',json_encode($backup,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),PHP_EOL;
+            fflush(STDOUT);
+        });
         echo "Схема данных обновлена до ".SCHEMA_VERSION.".\n";
+        exit(0);
+    }
+    if ($command === 'backup') {
+        if ($argc !== 3) throw new Problem('Укажите абсолютный путь для новой копии.');
+        $db=openDatabase();
+        $backup=snapshotDatabase($db,$argv[2]);
+        echo json_encode($backup,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),PHP_EOL;
+        exit(0);
+    }
+    if ($command === 'migrations') {
+        if ($argc !== 2) throw new Problem('Формат: migrations');
+        $db=openDatabase();
+        $version=schemaVersion($db);
+        $files=migrationFiles();
+        if ($version<1 || $version>SCHEMA_VERSION) throw new Problem('Несовместимая версия схемы.',503);
+        validateLedger($db,$version,$files);
+        $rows=$version>=3?$db->query('SELECT * FROM schema_migrations ORDER BY version')->fetchAll():[];
+        echo json_encode(['current'=>$version,'target'=>SCHEMA_VERSION,'pending'=>array_values(array_filter(array_keys($files),static fn($v)=>$v>$version)),'history'=>$rows],JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT),PHP_EOL;
         exit(0);
     }
     $db = database();
@@ -119,25 +148,6 @@ try {
             foreach ($rows as &$row) unset($row['target_hash']);
             unset($row);
             echo json_encode(['connection'=>$argv[2],'next_before'=>$more?(int)$rows[49]['id']:null,'checks'=>$rows],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL;
-            break;
-        case 'backup':
-            if ($argc !== 3 || !str_starts_with($argv[2],DIRECTORY_SEPARATOR)) throw new Problem('Укажите абсолютный путь для новой копии.');
-            $dir = realpath(dirname($argv[2]));
-            $public = realpath(ROOT.'/public');
-            if (!$dir || $dir === $public || str_starts_with($dir,$public.DIRECTORY_SEPARATOR)) throw new Problem('Выберите существующий каталог вне public.');
-            $target = $dir.DIRECTORY_SEPARATOR.basename($argv[2]);
-            // Reserve a private name, then publish a fully written snapshot without overwriting any existing file.
-            if (file_exists($target) || is_link($target)) throw new Problem('Файл назначения уже существует.');
-            $tmp = tempnam($dir,'.cws-backup-');
-            if ($tmp === false || dirname($tmp)!==$dir) throw new Problem('Не удалось создать временный файл копии.');
-            try {
-                $db->exec('VACUUM INTO '.$db->quote($tmp));
-                $copy = new \PDO('sqlite:'.$tmp);
-                if ($copy->query('PRAGMA quick_check')->fetchColumn() !== 'ok' || $copy->query('PRAGMA foreign_key_check')->fetch()) throw new Problem('Проверка копии не пройдена.');
-                $copy = null;
-                if (!@link($tmp,$target)) throw new Problem('Не удалось сохранить копию под выбранным именем.');
-            } finally { @unlink($tmp); }
-            echo "Копия создана и проверена.\n";
             break;
         default:
             fwrite(STDERR,helpText()); exit(2);

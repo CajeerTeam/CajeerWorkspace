@@ -17,6 +17,21 @@ jobs:
           coverage: none
       - run: find app public views tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php -l bin/workspace
+      - run: php bin/workspace doctor
       - run: php tests/integration_profiles.php
       - run: php tests/run.php
       - run: python3 tests/web_e2e.py
+      - run: php tests/migrations.php
+      - run: python3 tests/release.py
+  package:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/release.py build --output dist
+      - run: python3 tools/release.py verify "dist/CajeerWorkspace-$(cat VERSION).zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CajeerWorkspace-release
+          path: dist/*
+          if-no-files-found: error

@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.1.1';
-const SCHEMA_VERSION = 2;
+const VERSION = '0.1.2';
+const SCHEMA_VERSION = 3;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -49,37 +49,17 @@ function dataDir(): string {
     return $dir;
 }
 
-function database(bool $install = false, bool $upgrade = false): PDO {
-    if (PHP_INT_SIZE < 8) throw new Problem('Для сумм в кассовой книге требуется 64-разрядный PHP.', 503);
-    $file = dataDir() . '/workspace.sqlite';
-    if (!$install && !is_file($file)) throw new Problem('Рабочее пространство ещё не установлено. Выполните bin/workspace init.', 503);
-    $db = new PDO('sqlite:' . $file, null, null, [
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-    ]);
-    $db->exec('PRAGMA busy_timeout=5000');
-    $db->exec('PRAGMA foreign_keys=ON');
+function database(bool $install = false, bool $upgrade = false, ?string $backupPath = null, ?callable $onBackup = null): PDO {
+    $db = openDatabase($install);
     if ($install || $upgrade) {
-        if ($install) $db->exec('PRAGMA journal_mode=WAL');
-        atomic($db, static function () use ($db,$install,$upgrade) {
-            $version = (int)$db->query('PRAGMA user_version')->fetchColumn();
-            $fresh = $version === 0 && $install;
-            if ($fresh) {
-                $db->exec(file_get_contents(ROOT . '/database/001.sql'));
-                $db->exec('PRAGMA user_version=1');
-                $version = 1;
-            }
-            if ($version === 1 && ($fresh || $upgrade)) {
-                $db->exec(file_get_contents(ROOT . '/database/002.sql'));
-                $db->exec('PRAGMA user_version=2');
-                $version = 2;
-            }
-            if ($version === 1) throw new Problem('Требуется обновление схемы: после резервной копии выполните php bin/workspace upgrade.',503);
-            if ($version !== SCHEMA_VERSION) throw new Problem('Версия схемы данных несовместима с этим выпуском.', 503);
-        });
+        // init is not an implicit upgrade for an existing installation.
+        if ($upgrade || schemaVersion($db) === 0) migrateDatabase($db,$install,$backupPath,$onBackup);
+        if ($install && schemaVersion($db) === SCHEMA_VERSION) $db->exec('PRAGMA journal_mode=WAL');
     }
-    $version = (int)$db->query('PRAGMA user_version')->fetchColumn();
-    if ($version === 1) throw new Problem('Требуется обновление схемы: после резервной копии выполните php bin/workspace upgrade.',503);
-    if ($version !== SCHEMA_VERSION) throw new Problem('Версия схемы данных несовместима с этим выпуском.', 503);
+    $version = schemaVersion($db);
+    if ($version > 0 && $version < SCHEMA_VERSION) throw new Problem('Требуется обновление схемы: выполните php bin/workspace upgrade.',503);
+    if ($version !== SCHEMA_VERSION) throw new Problem('Версия схемы данных несовместима с этим выпуском.',503);
+    validateLedger($db,$version,migrationFiles());
     return $db;
 }
 

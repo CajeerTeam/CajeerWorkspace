@@ -2,3 +2,5 @@
 /config/connections.local.json
 /.env
 /vendor/
+/dist/
+/SHA256SUMS

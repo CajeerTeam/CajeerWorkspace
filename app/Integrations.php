@@ -311,7 +311,7 @@ function profileReport(PDO $db): array {
         $configuredTypes[$c['type']]=true;
         if ($c['owner']==='') $issues[]=$id.': ответственный не задан';
         if ($c['launch']===null) $issues[]=$id.': адрес интерфейса не задан';
-        if ($c['status']!=='Доступно' || ($c['latest']['transition'] ?? 'legacy')==='legacy') $issues[]=$id.': нет свежей успешной проверки 0.1.1';
+        if ($c['status']!=='Доступно' || ($c['latest']['transition'] ?? 'legacy')==='legacy') $issues[]=$id.': нет свежей успешной проверки с протоколом';
         if ($c['type']!=='github' && ($c['latest']['observed_version'] ?? null)===null && $c['installed_version']===null) $issues[]=$id.': версия не подтверждена';
         if ($c['type']!=='github' && $c['installed_version']!==null && ($c['latest']['observed_version'] ?? null)!==null && $c['installed_version']!==$c['latest']['observed_version']) $issues[]=$id.': версия оператора отличается от API';
         if ($c['version_path']!==null && ($c['latest']['version_error'] ?? null)!==null) $issues[]=$id.': дополнительный API версии не подтверждён';
