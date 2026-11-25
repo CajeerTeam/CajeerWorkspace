@@ -1,4 +1,4 @@
-# Обновление и возврат · 0.2.0
+# Обновление и возврат · 0.2.1
 
 ## Требования и подготовка
 
@@ -16,7 +16,7 @@ export WORKSPACE_DATA=/srv/cajeer/data
 export WORKSPACE_CONFIG=/srv/cajeer/config/connections.local.json
 php bin/workspace doctor
 php bin/workspace migrations
-php bin/workspace upgrade /srv/backups/workspace-pre-012.sqlite
+php bin/workspace upgrade /srv/backups/workspace-pre-021.sqlite
 php bin/workspace migrations
 php bin/workspace version
 ```
@@ -25,7 +25,7 @@ php bin/workspace version
 
 Все ожидающие миграции, журнал и `user_version` фиксируются одной транзакцией. Если копия не создана/не проверена, SQL не выполняется. При ошибке SQL изменения откатываются, предварительный снимок остаётся доступен. Повтор успешно завершённого `upgrade` не повторяет SQL и не создаёт лишний снимок. `init` не обновляет существующую старую схему, HTTP тоже. В журнале `origin=legacy` означает принятую после сверки структуры миграцию, а не исторически наблюдавшуюся дату установки; `recorded_at` — время записи в новый журнал. Новые миграции имеют `origin=applied`. Контрольные суммы сверяются и при открытии базы приложением.
 
-5. Убедитесь, что `migrations` возвращает `current: 4`, `target: 4`, `pending: []`, четыре записи журнала. До открытия доступа запустите FPM, ограничив трафик проверяющим оператором. Проверьте `/health.php`, вход, количество проектов и задач, итоги по каждой валюте, скачивание обеих редакций контрольного PDF и совпадение SHA-256. Запустите `sync` для настроенных подключений и проверьте профиль. После приёмки верните пользовательский трафик и cron.
+5. Убедитесь, что `migrations` возвращает `current: 5`, `target: 5`, `pending: []`, пять записи журнала. До открытия доступа запустите FPM, ограничив трафик проверяющим оператором. Проверьте `/health.php`, вход, количество проектов и задач, итоги по каждой валюте, скачивание обеих редакций контрольного PDF и совпадение SHA-256. Запустите `sync` для настроенных подключений и проверьте профиль. После приёмки верните пользовательский трафик и cron.
 
 ## Возврат к предыдущему выпуску
 
@@ -36,13 +36,13 @@ php bin/workspace version
 3. Создайте новый пустой каталог данных с правами 0700 и скопируйте проверенный снимок как `workspace.sqlite` с правами 0600. Не переносите старые `-wal`, `-shm`, `sessions/` и `sync.lock`. Пример (от пользователя установки, пути замените своими):
 
 ```sh
-sha256sum /srv/backups/workspace-pre-012.sqlite
-mkdir -m 700 /srv/cajeer/restored-011
-cp /srv/backups/workspace-pre-012.sqlite /srv/cajeer/restored-011/workspace.sqlite
-chmod 600 /srv/cajeer/restored-011/workspace.sqlite
-export WORKSPACE_DATA=/srv/cajeer/restored-011
+sha256sum /srv/backups/workspace-pre-021.sqlite
+mkdir -m 700 /srv/cajeer/restored-020
+cp /srv/backups/workspace-pre-021.sqlite /srv/cajeer/restored-020/workspace.sqlite
+chmod 600 /srv/cajeer/restored-020/workspace.sqlite
+export WORKSPACE_DATA=/srv/cajeer/restored-020
 # Переключите тот же WORKSPACE_DATA, WORKSPACE_CONFIG и docroot в FPM.
-cd /srv/cajeer/releases/0.1.1
+cd /srv/cajeer/releases/0.2.0
 php bin/workspace version
 ```
 
@@ -54,8 +54,10 @@ php bin/workspace version
 
 ```sh
 python3 tools/release.py build --output dist
-python3 tools/release.py verify dist/CajeerWorkspace-0.2.0.zip
-cd dist && sha256sum -c CajeerWorkspace-0.2.0.zip.sha256
+python3 tools/release.py verify dist/CajeerWorkspace-0.2.1.zip
+cd dist && sha256sum -c CajeerWorkspace-0.2.1.zip.sha256
 ```
 
 Сборка проверяет согласованность `VERSION`, константы версии, непрерывность SQL 001…N и явный список файлов. Содержимое архива располагается в корне, без обёрточной директории. Включены приложение, SQL, документация, тесты, CI, пример конфигурации и сборщик. Локальные данные, конфигурация, `.env`, VCS и зависимости не попадают в пакет. Новые штатные файлы необходимо добавлять в список `FILES` сборщика. Существующие артефакты не перезаписываются. С фиксированными исходниками и одинаковой реализацией ZIP/zlib сборка воспроизводима. Внутри ZIP `SHA256SUMS` для каждого файла, отдельно `<архив>.sha256` для всего архива. Проверка проверяет оба уровня, состав, версию, отсутствие повторяющихся и небезопасных путей. Выполняйте её **доверенной копией сборщика из репозитория**, до распаковки. SHA-256 обнаруживает повреждения, но не удостоверяет автора: получайте контрольную сумму из доверенного канала; подписанные пакеты не входят в этот выпуск. CI собирает и проверяет полный пакет после матрицы тестов; публикация/подписание релиза остаются ручными.
+
+Для PostgreSQL 4 → 5 см. [PERMISSIONS.md](PERMISSIONS.md): предварительный проверенный `pg_dump` обязателен; аргумент пути SQLite не используется.

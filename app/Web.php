@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -119,6 +119,12 @@ function handlePost(PDO $db, ?array $user): never {
             changeMembership($db,$user,'team',numberId($_POST['team_id']??0),numberId($_POST['member_id']??0),$act==='team.add'); go('team');
         case 'project.add': case 'project.remove':
             changeMembership($db,$user,'project',$projectId(),numberId($_POST['member_id']??0),$act==='project.add'); go('project',['id'=>$projectId()]);
+        case 'project.role':
+            changeProjectRole($db,$user,$projectId(),numberId($_POST['member_id']??0),choice($_POST['role']??'',PROJECT_ROLES)); go('project',['id'=>$projectId()]);
+        case 'payment.policy':
+            changePaymentPolicy($db,$user,$projectId(),choice($_POST['dual']??'',['0'=>'','1'=>''])==='1'); go('project',['id'=>$projectId()]);
+        case 'org.role':
+            changeOrganizationRole($db,$user,numberId($_POST['member_id']??0),choice($_POST['role']??'',ROLES)); go('team');
         case 'org.remove':
             removeOrganizationMember($db,$user,numberId($_POST['member_id']??0)); go('team');
         case 'invite.issue':
@@ -138,13 +144,17 @@ function handlePost(PDO $db, ?array $user): never {
             $task = entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id]); allowedProject($db,$user,(int)$task['project_id']);
             go('project',['id'=>$task['project_id']]);
         case 'cash.post':
-            recordCash($db,$user,$key,$projectId(),$_POST);
-            $_SESSION['notice'] = 'Операция проведена.'; go('finance',['project'=>$projectId()]);
+            $payment=submitPayment($db,$user,$key,$projectId(),paymentData($_POST));
+            $_SESSION['notice'] = $payment['status']==='pending'?'Заявка ожидает согласования.':'Результат операции: '.$payment['status']; go('finance',['project'=>$projectId()]);
         case 'cash.reverse':
-            reverseCash($db,$user,$key,numberId($_POST['entry_id'] ?? 0));
-            $_SESSION['notice'] = 'Сторно проведено.'; go('finance');
+            $entry=numberId($_POST['entry_id']??0); $pid=(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$entry])['project_id'];
+            $payment=submitPayment($db,$user,$key,$pid,[],$entry);
+            $_SESSION['notice'] = $payment['status']==='pending'?'Сторно ожидает согласования.':'Результат сторно: '.$payment['status']; go('finance');
+        case 'payment.approve': case 'payment.reject': case 'payment.cancel':
+            decidePayment($db,$user,$key,numberId($_POST['payment_id']??0),substr($act,8));
+            $_SESSION['notice']='Решение сохранено.'; go('payments');
         case 'document.version':
-            permit($user,'legal');
+            requireProjectRight($db,$user,$projectId(),'legal.write');
             $documentId = ($_POST['document_id'] ?? '') === '' ? null : numberId($_POST['document_id']);
             $id = storeDocument($db,$user,$key,$projectId(),$documentId,$documentId ? numberId($_POST['revision'] ?? 0) : 0,$_POST,documentFile($_FILES['pdf'] ?? []));
             $_SESSION['notice'] = 'Версия документа сохранена.'; go('document',['id'=>$id]);
@@ -185,10 +195,21 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     if (empty($user['organization_id'])) go('invite');
     $user=organizationUser($db,$user);
     [$scope,$scopeArgs]=projectScope($db,$user);
-    if (isset(PAGE_RIGHTS[$page])) permit($user,PAGE_RIGHTS[$page]);
+    $navRights=[];
+    foreach (['finance','legal','connections','audit'] as $right) $navRights[$right]=hasProjectRight($db,$user,$right) || can($user,$right);
+    $user['nav_rights']=$navRights;
+    if (isset(PAGE_RIGHTS[$page])) {
+        $right=PAGE_RIGHTS[$page];
+        if ($right==='people') permit($user,$right);
+        elseif (!$navRights[$right]) throw new Problem('Нет доступа к разделу.',403);
+        if (in_array($right,['finance','legal'],true)) [$scope,$scopeArgs]=projectRightScope($db,$user,$right);
+    }
     $projectOptions = static fn() => array_column(query($db,"SELECT p.id,p.title FROM projects p WHERE $scope ORDER BY p.title,p.id",$scopeArgs)->fetchAll(),'title','id');
     $projectId = ($_GET['project'] ?? '') === '' ? null : numberId($_GET['project']);
-    if ($projectId) allowedProject($db,$user,$projectId);
+    if ($projectId) {
+        allowedProject($db,$user,$projectId);
+        if (isset(PAGE_RIGHTS[$page]) && in_array(PAGE_RIGHTS[$page],['finance','legal','connections','audit'],true)) requireProjectRight($db,$user,$projectId,PAGE_RIGHTS[$page]);
+    }
     $data = [];
     switch ($page) {
         case 'search':
@@ -198,7 +219,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
                 $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';
                 $data['matches']['projects']=query($db,"SELECT p.id,p.title FROM projects p WHERE $scope AND (LOWER(p.title) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.client) LIKE LOWER(?) ESCAPE '!') ORDER BY p.id DESC LIMIT 100",[...$scopeArgs,$like,$like])->fetchAll();
                 $data['matches']['tasks']=query($db,"SELECT t.title,t.project_id AS id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE $scope AND LOWER(t.title) LIKE LOWER(?) ESCAPE '!' ORDER BY t.id DESC LIMIT 100",[...$scopeArgs,$like])->fetchAll();
-                if (can($user,'legal')) $data['matches']['documents']=query($db,"SELECT d.id,d.title FROM documents d JOIN projects p ON p.id=d.project_id WHERE $scope AND LOWER(d.title) LIKE LOWER(?) ESCAPE '!' ORDER BY d.id DESC LIMIT 100",[...$scopeArgs,$like])->fetchAll();
+                [$docScope,$docArgs]=projectRightScope($db,$user,'legal');
+                $data['matches']['documents']=query($db,"SELECT d.id,d.title FROM documents d JOIN projects p ON p.id=d.project_id WHERE $docScope AND LOWER(d.title) LIKE LOWER(?) ESCAPE '!' ORDER BY d.id DESC LIMIT 100",[...$docArgs,$like])->fetchAll();
             }
             break;
         case 'overview':
@@ -213,13 +235,18 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'project':
             $p = allowedProject($db,$user,numberId($_GET['id'] ?? 0));
             $data = ['project'=>$p,'tasks'=>query($db,"SELECT t.*,u.name assignee FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.state='done',t.due_on IS NULL,t.due_on,t.id",[$p['id']])->fetchAll()];
-            if (can($user,'manage')) {
+            $data['projectRole']=projectRole($db,$user,(int)$p['id']);
+            $data['dual']=dualControl($db,(int)$p['id']);
+            $data['memberAdmin']=($user['role']==='owner'||($user['role']==='manager' && roleAllows($data['projectRole'],'manage')));
+            if (roleAllows($data['projectRole'],'manage')) {
                 $data['members']=orgMembers($db,$user);
                 $data['projectMembers']=array_map('intval',query($db,'SELECT user_id FROM project_members WHERE project_id=?',[$p['id']])->fetchAll(PDO::FETCH_COLUMN));
-                $data['assignable']=array_column(array_filter($data['members'],fn($m)=>$m['enabled'] && in_array($m['role'],['owner','manager','developer'],true) && ($m['role']==='owner'||in_array((int)$m['id'],$data['projectMembers'],true))),'name','id');
+                $data['explicitRoles']=array_column(query($db,'SELECT user_id,role FROM project_access WHERE project_id=?',[$p['id']])->fetchAll(),'role','user_id');
+                $data['assignable']=array_column(array_filter($data['members'],fn($m)=>$m['enabled'] && ($m['role']==='owner'||(in_array((int)$m['id'],$data['projectMembers'],true) && roleAllows($data['explicitRoles'][$m['id']]??$m['role'],'work')))),'name','id');
             }
-            if (can($user,'connections')) {
+            if (roleAllows($data['projectRole'],'connections')) {
                 $data['connections'] = scopedConnections($db,$user,(int)$p['id']);
+                if (roleAllows($data['projectRole'],'operations')) $data['connections'] += scopedConnections($db,$user);
                 $data['links'] = query($db,'SELECT connection_key FROM project_connections WHERE project_id=? ORDER BY connection_key',[$p['id']])->fetchAll(PDO::FETCH_COLUMN);
             }
             break;
@@ -229,17 +256,28 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $rows = ledger($db,$user,$_GET,($pageNo-1)*50)->fetchAll();
             $data = ['rows'=>array_slice($rows,0,50),'more'=>count($rows)>50,'pageNo'=>$pageNo,'balances'=>balances($db,$user,$_GET),'projects'=>$projectOptions(),'selected'=>$projectId,
                 'filters'=>array_filter(['project'=>$projectId,'from'=>$_GET['from'] ?? null,'to'=>$_GET['to'] ?? null])];
+            $data['writableProjects']=rightProjects($db,$user,'payment.create');
+            $data['pendingReversals']=array_map('intval',query($db,"SELECT r.reversal_of FROM payment_requests r JOIN projects p ON p.id=r.project_id WHERE $scope AND r.status='pending' AND r.reversal_of IS NOT NULL",$scopeArgs)->fetchAll(PDO::FETCH_COLUMN));
             break;
+        case 'payments':
+            $before=isset($_GET['before'])?numberId($_GET['before']):null;
+            $rows=paymentQueue($db,$user,$projectId,$before);
+            $data=['payments'=>array_slice($rows,0,50),'nextBefore'=>count($rows)>50?(int)$rows[49]['id']:null,'selected'=>$projectId,'projects'=>$projectOptions(),'creatable'=>rightProjects($db,$user,'payment.create'),'approvable'=>rightProjects($db,$user,'payment.approve')]; break;
+        case 'audit':
+            $rows=auditRows($db,$user,$projectId,isset($_GET['before'])?numberId($_GET['before']):null);
+            $data=['events'=>array_slice($rows,0,50),'nextBefore'=>count($rows)>50?(int)$rows[49]['id']:null,'selected'=>$projectId,'projects'=>rightProjects($db,$user,'audit')]; break;
         case 'export': sendCsv($db,$user);
         case 'documents':
             $data['projects'] = $projectOptions();
             $data['selected'] = $projectId;
+            $data['writableProjects']=rightProjects($db,$user,'legal.write');
             $data['docs'] = query($db,'SELECT d.*,p.title project_title,MAX(v.revision) revision FROM documents d JOIN projects p ON d.project_id=p.id JOIN document_versions v ON v.document_id=d.id '.
                 "WHERE $scope ".($projectId ? 'AND d.project_id=? ' : '').'GROUP BY d.id,p.title ORDER BY d.id DESC',$projectId?[...$scopeArgs,$projectId]:$scopeArgs)->fetchAll();
             break;
         case 'document':
             $id = numberId($_GET['id'] ?? 0);
             $data['doc'] = entity($db,"SELECT d.*,p.title project_title FROM documents d JOIN projects p ON d.project_id=p.id WHERE d.id=? AND $scope",[$id,...$scopeArgs]);
+            $data['writable']=roleAllows(projectRole($db,$user,(int)$data['doc']['project_id']),'legal.write');
             $data['versions'] = query($db,'SELECT v.revision,v.sha256,v.created_at,length(v.bytes) size,u.name FROM document_versions v JOIN users u ON v.actor_id=u.id WHERE document_id=? ORDER BY revision DESC',[$id])->fetchAll();
             break;
         case 'download':

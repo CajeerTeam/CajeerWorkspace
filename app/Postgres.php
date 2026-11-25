@@ -33,8 +33,12 @@ function migratePostgres(PDO $db,bool $install): void {
     atomic($db,function() use($db,$install) {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
-        if (!$install || $v!==0) throw new Problem('Поддерживается новая база PostgreSQL или перенос из SQLite текущей версии.',503);
-        installPostgres($db);
+        if ($v===0 && $install) { installPostgres($db); return; }
+        if ($install || $v!==4) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        $files=migrationFiles($db); validateLedger($db,$v,$files);
+        // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
+        $db->exec($files[5]['sql']); recordMigration($db,5,$files,'applied');
+        validateLedger($db,SCHEMA_VERSION,$files);
     });
 }
 // Explicit table inventory, including identities, invitations and all binary versions.
@@ -42,7 +46,8 @@ const TRANSFER_TABLES = [
     'users'=>'id','login_attempts'=>'bucket','organizations'=>'id','organization_members'=>'organization_id,user_id','projects'=>'id',
     'tasks'=>'id','cash_entries'=>'id','documents'=>'id','document_versions'=>'document_id,revision','project_connections'=>'project_id,connection_key',
     'connection_results'=>'connection_key','action_log'=>'id','connection_checks'=>'id','teams'=>'id','team_members'=>'team_id,user_id',
-    'project_members'=>'project_id,user_id','invitations'=>'id','organization_connections'=>'connection_key'
+    'project_members'=>'project_id,user_id','invitations'=>'id','organization_connections'=>'connection_key',
+    'project_access'=>'project_id,user_id','payment_policies'=>'project_id','payment_requests'=>'id','audit_events'=>'id'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
@@ -67,7 +72,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.2.0.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.2.1.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

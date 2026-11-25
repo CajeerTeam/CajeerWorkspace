@@ -11,72 +11,55 @@ function createProject(PDO $db, array $user, string $key, array $form): int {
     $args = [$user['organization_id'],word($form['title'] ?? '',120,'Название'), word($form['client'] ?? '',120,'Заказчик',false), choice($form['kind'] ?? '',PROJECT_KINDS)];
     return action($db,$user,$key,'project.create',$args,static function () use ($db,$args,$user) {
         $id=insertId($db,'INSERT INTO projects(organization_id,title,client,kind) VALUES(?,?,?,?)',$args);
-        query($db,'INSERT INTO project_members VALUES(?,?,?)',[$user['organization_id'],$id,$user['id']]);
+        query($db,'INSERT INTO project_members(organization_id,project_id,user_id) VALUES(?,?,?)',[$user['organization_id'],$id,$user['id']]);
         return $id;
     });
 }
 
 function createTask(PDO $db, array $user, string $key, int $projectId, array $form): int {
     $user=organizationUser($db,$user);
-    permit($user, 'manage');
+    requireProjectRight($db,$user,$projectId,'manage');
     $assignee = ($form['assignee'] ?? '') === '' ? null : numberId($form['assignee']);
     $args = [$projectId,word($form['title'] ?? '',180,'Задача'),$assignee,calendarDate($form['due_on'] ?? '',true)];
     allowedProject($db,$user,$projectId);
     return action($db,$user,$key,'task.create',$args,static function () use ($db,$args,$projectId,$assignee,$user) {
-        allowedProject($db,$user,$projectId);
-        if ($assignee !== null) { $candidate=organizationUser($db,['id'=>$assignee],$user['organization_id']); permit($candidate,'work'); allowedProject($db,$candidate,$projectId); }
+        requireProjectRight($db,$user,$projectId,'manage');
+        if ($assignee !== null) { $candidate=organizationUser($db,['id'=>$assignee],$user['organization_id']); requireProjectRight($db,$candidate,$projectId,'work'); }
         return insertId($db,'INSERT INTO tasks(project_id,title,assignee_id,due_on) VALUES(?,?,?,?)',$args);
     });
 }
 
 function changeTask(PDO $db, array $user, string $key, int $taskId, int $version, string $state): int {
     $user=organizationUser($db,$user);
-    permit($user,'work');
     choice($state,STATES);
-    allowedProject($db,$user,(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$taskId])['project_id']);
+    requireProjectRight($db,$user,(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$taskId])['project_id'],'work');
     return action($db,$user,$key,'task.state',[$taskId,$version,$state],static function () use ($db,$user,$taskId,$version,$state) {
         $task = entity($db,'SELECT * FROM tasks WHERE id=?',[$taskId]);
-        allowedProject($db,$user,(int)$task['project_id']);
-        if (!can($user,'manage') && (int)$task['assignee_id'] !== (int)$user['id']) throw new Problem('Менять статус может исполнитель или менеджер.',403);
+        requireProjectRight($db,$user,(int)$task['project_id'],'work');
+        if (!roleAllows(projectRole($db,$user,(int)$task['project_id']),'manage') && (int)$task['assignee_id'] !== (int)$user['id']) throw new Problem('Менять статус может исполнитель или менеджер.',403);
         if ((int)$task['version'] !== $version) throw new Problem('Задача уже изменилась. Обновите страницу проекта.',409);
         query($db,'UPDATE tasks SET state=?,version=version+1 WHERE id=?',[$state,$taskId]);
         return $taskId;
     });
 }
 
-function recordCash(PDO $db, array $user, string $key, int $projectId, array $form): int {
-    $user=organizationUser($db,$user);
-    permit($user,'finance');
-    $date = calendarDate($form['booked_on'] ?? '');
-    if ($date > gmdate('Y-m-d')) throw new Problem('Для фактического движения денег укажите сегодняшнюю или прошедшую дату.');
-    $args = [$projectId,choice($form['direction'] ?? '', DIRECTIONS),moneyMinor($form['amount'] ?? ''),
-        choice($form['currency'] ?? '', array_flip(CURRENCIES)),$date,word($form['memo'] ?? '',200,'Назначение'),$user['id']];
-    allowedProject($db,$user,$projectId);
-    return action($db,$user,$key,'cash.post',$args,static function () use ($db,$args,$projectId,$user) {
-        allowedProject($db,$user,$projectId);
-        return insertId($db,'INSERT INTO cash_entries(project_id,direction,amount_minor,currency,booked_on,memo,actor_id) VALUES(?,?,?,?,?,?,?)',$args);
-    });
+function recordCash(PDO $db,array $user,string $key,int $projectId,array $form): int {
+    $p=submitPayment($db,$user,$key,$projectId,paymentData($form));
+    return (int)($p['cash_entry_id']??$p['id']);
 }
-
-function reverseCash(PDO $db, array $user, string $key, int $id): int {
-    $user=organizationUser($db,$user);
-    permit($user,'finance');
-    allowedProject($db,$user,(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id']);
-    return action($db,$user,$key,'cash.reverse',[$id],static function () use ($db,$user,$id) {
-        $entry = entity($db,'SELECT * FROM cash_entries WHERE id=?',[$id]);
-        allowedProject($db,$user,(int)$entry['project_id']);
-        if ($entry['reversal_of'] !== null || query($db,'SELECT 1 FROM cash_entries WHERE reversal_of=?',[$id])->fetchColumn()) throw new Problem('Для этой записи сторно уже проведено.',409);
-        return insertId($db,'INSERT INTO cash_entries(project_id,direction,amount_minor,currency,booked_on,memo,reversal_of,actor_id) VALUES(?,?,?,?,?,?,?,?)',
-            [$entry['project_id'],$entry['direction'],-(int)$entry['amount_minor'],$entry['currency'],gmdate('Y-m-d'),'Сторно · '.$entry['memo'],$id,$user['id']]);
-    });
+function reverseCash(PDO $db,array $user,string $key,int $id): int {
+    $project=(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'];
+    $p=submitPayment($db,$user,$key,$project,[],$id);
+    return (int)($p['cash_entry_id']??$p['id']);
 }
 
 function cashFilter(PDO $db,array $user,array $input): array {
-    $user=organizationUser($db,$user); permit($user,'finance');
-    [$scope,$args]=projectScope($db,$user);
+    $user=organizationUser($db,$user);
+    if (!hasProjectRight($db,$user,'finance') && !can($user,'finance')) throw new Problem('Нет доступа к финансам.',403);
+    [$scope,$args]=projectRightScope($db,$user,'finance');
     $clauses = ["e.project_id IN (SELECT p.id FROM projects p WHERE $scope)"];
     if (($input['project'] ?? '') !== '') {
-        allowedProject($db,$user,numberId($input['project']));
+        requireProjectRight($db,$user,numberId($input['project']),'finance');
         $clauses[] = 'e.project_id = ?';
         $args[] = numberId($input['project']);
     }
@@ -124,7 +107,7 @@ function documentFile(array $upload): string {
 
 function storeDocument(PDO $db, array $user, string $key, int $projectId, ?int $docId, int $expected, array $form, string $bytes): int {
     $user=organizationUser($db,$user);
-    permit($user,'legal');
+    requireProjectRight($db,$user,$projectId,'legal.write');
     if (strlen($bytes) > 2097152 || !str_starts_with($bytes,'%PDF-') || !str_contains(substr($bytes,-1024),'%%EOF')) {
         throw new Problem('Нужен PDF до 2 МиБ с корректными маркерами начала и конца.');
     }
@@ -133,7 +116,7 @@ function storeDocument(PDO $db, array $user, string $key, int $projectId, ?int $
     $hash = hash('sha256',$bytes);
     allowedProject($db,$user,$projectId);
     return action($db,$user,$key,'document.version',[$projectId,$docId,$expected,$title,$kind,$hash],static function () use ($db,$user,$projectId,$docId,$expected,$title,$kind,$bytes,$hash) {
-        allowedProject($db,$user,$projectId);
+        requireProjectRight($db,$user,$projectId,'legal.write');
         if ($docId === null) {
             $docId=insertId($db,'INSERT INTO documents(project_id,title,kind) VALUES(?,?,?)',[$projectId,$title,$kind]);
         } else {
@@ -157,12 +140,13 @@ function storeDocument(PDO $db, array $user, string $key, int $projectId, ?int $
 
 function linkConnection(PDO $db, array $user, string $key, int $projectId, string $connection, bool $attach): int {
     $user=organizationUser($db,$user);
-    orgOwner($db,$user);
+    requireProjectRight($db,$user,$projectId,'operations');
     if (!isset(connections()[$connection]) && $attach) throw new Problem('Подключение отсутствует в конфигурации.');
     allowedProject($db,$user,$projectId);
     return action($db,$user,$key,$attach?'connection.attach':'connection.detach',[$projectId,$connection],static function () use ($db,$projectId,$connection,$attach,$user) {
         allowedProject($db,$user,$projectId);
-        orgOwner($db,$user);
+        requireProjectRight($db,$user,$projectId,'operations');
+        if ($attach && organizationUser($db,$user)['role']!=='owner' && !isset(scopedConnections($db,$user)[$connection])) throw new Problem('Подключение не предоставлено оператору.',403);
         if (!connectionAllowed($db,$user,$connection)) throw new Problem('Подключение не найдено.',404);
         query($db,$attach ? 'INSERT INTO project_connections VALUES(?,?) ON CONFLICT DO NOTHING' : 'DELETE FROM project_connections WHERE project_id=? AND connection_key=?',[$projectId,$connection]);
         return $projectId;

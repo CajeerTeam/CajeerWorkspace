@@ -25,6 +25,9 @@ jobs:
       - run: python3 tests/release.py
       - run: python3 tests/tenant_schema.py
       - run: python3 tests/tenant_e2e.py
+      - run: php tests/permissions_roles.php
+      - run: python3 tests/permissions_schema.py
+      - run: python3 tests/permissions_e2e.py
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -43,6 +46,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
+        suite: ['tenant', 'permissions']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -71,4 +75,4 @@ jobs:
           php-version: '8.4'
           extensions: pdo_sqlite, pdo_pgsql, curl
           coverage: none
-      - run: python3 tests/tenant_e2e.py --postgres
+      - run: python3 tests/${{ matrix.suite }}_e2e.py --postgres

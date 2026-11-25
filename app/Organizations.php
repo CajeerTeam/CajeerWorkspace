@@ -42,6 +42,7 @@ function createOrganization(PDO $db,array $user,string $name): int {
         }
         $id=insertId($db,'INSERT INTO organizations(name) VALUES(?)',[$name]);
         query($db,'INSERT INTO organization_members VALUES(?,?,?)',[$id,$user['id'],'owner']);
+        auditEvent($db,['organization_id'=>$id,'id'=>$user['id']],null,'org.create',$id);
         return $id;
     });
 }
@@ -50,6 +51,7 @@ function renameOrganization(PDO $db,array $user,string $name): void {
     atomic($db,function() use($db,$user,$name) {
         $u=orgOwner($db,$user);
         query($db,'UPDATE organizations SET name=? WHERE id=?',[$name,$u['organization_id']]);
+        auditEvent($db,$u,null,'org.rename',$u['organization_id']);
     });
 }
 function editTeam(PDO $db,array $user,int $teamId,?string $name): void {
@@ -64,6 +66,7 @@ function editTeam(PDO $db,array $user,int $teamId,?string $name): void {
             if (query($db,'SELECT 1 FROM teams WHERE organization_id=? AND name=? AND id<>?',[$org,$name,$teamId])->fetchColumn()) throw new Problem('Команда уже существует.',409);
             query($db,'UPDATE teams SET name=? WHERE id=? AND organization_id=?',[$name,$teamId,$org]);
         }
+        auditEvent($db,$u,null,$name===null?'team.delete':'team.rename',$teamId);
     });
 }
 function orgMembers(PDO $db,array $user): array {
@@ -75,22 +78,25 @@ function createTeam(PDO $db,array $user,string $name): void {
     atomic($db,function() use($db,$user,$name) {
         $u=orgOwner($db,$user);
         if (query($db,'SELECT 1 FROM teams WHERE organization_id=? AND name=?',[$u['organization_id'],$name])->fetchColumn()) throw new Problem('Команда уже существует.',409);
-        query($db,'INSERT INTO teams(organization_id,name) VALUES(?,?)',[$u['organization_id'],$name]);
+        $id=insertId($db,'INSERT INTO teams(organization_id,name) VALUES(?,?)',[$u['organization_id'],$name]);
+        auditEvent($db,$u,null,'team.create',$id);
     });
 }
 function changeMembership(PDO $db,array $user,string $type,int $object,int $uid,bool $add): void {
     atomic($db,function() use($db,$user,$type,$object,$uid,$add) {
         $u=organizationUser($db,$user); $org=$u['organization_id'];
         if ($type==='team') { orgOwner($db,$u); entity($db,'SELECT id FROM teams WHERE id=? AND organization_id=?',[$object,$org]); $table='team_members'; $col='team_id'; }
-        elseif ($type==='project') { permit($u,'manage'); allowedProject($db,$u,$object); $table='project_members'; $col='project_id'; }
+        elseif ($type==='project') { permit($u,'manage'); requireProjectRight($db,$u,$object,'manage'); $table='project_members'; $col='project_id'; if ($u['role']!=='owner' && query($db,'SELECT 1 FROM project_access WHERE project_id=? AND user_id=?',[$object,$uid])->fetchColumn()) throw new Problem('Явные проектные роли изменяет только владелец.',403); }
         else throw new Problem('Неизвестный тип членства.');
         entity($db,'SELECT m.user_id FROM organization_members m JOIN users a ON a.id=m.user_id WHERE m.organization_id=? AND m.user_id=?'.($add?' AND a.enabled=1':''),[$org,$uid]);
         if (!$add && $type==='project' && $uid===(int)$u['id'] && $u['role']!=='owner') throw new Problem('Нельзя удалить собственный доступ.');
-        if ($add) query($db,"INSERT INTO $table(organization_id,$col,user_id) VALUES(?,?,?) ON CONFLICT DO NOTHING",[$org,$object,$uid]);
+        if ($add) $changed=query($db,"INSERT INTO $table(organization_id,$col,user_id) VALUES(?,?,?) ON CONFLICT DO NOTHING",[$org,$object,$uid])->rowCount();
         else {
-            query($db,"DELETE FROM $table WHERE organization_id=? AND $col=? AND user_id=?",[$org,$object,$uid]);
+             $changed=query($db,"DELETE FROM $table WHERE organization_id=? AND $col=? AND user_id=?",[$org,$object,$uid])->rowCount();
             if ($type==='project') query($db,'UPDATE tasks SET assignee_id=NULL,version=version+1 WHERE project_id=? AND assignee_id=? AND NOT EXISTS(SELECT 1 FROM organization_members WHERE organization_id=? AND user_id=? AND role=?)',[$object,$uid,$org,$uid,'owner']);
         }
+        if ($changed && !$add && $type==='project') cancelPendingByCreator($db,$u,$uid,$object);
+        if ($changed) auditEvent($db,$u,$type==='project'?$object:null,$type.($add?'.add':'.remove'),$uid,$type==='team'?'team #'.$object:'');
     });
 }
 function removeOrganizationMember(PDO $db,array $user,int $uid): void {
@@ -100,8 +106,11 @@ function removeOrganizationMember(PDO $db,array $user,int $uid): void {
         if ($uid===(int)$u['id']) throw new Problem('Нельзя исключить собственную учётную запись.',409);
         if ($member['role']==='owner' && !query($db,"SELECT 1 FROM organization_members m JOIN users a ON a.id=m.user_id WHERE m.organization_id=? AND m.role='owner' AND a.enabled=1 AND m.user_id<>?",[$org,$uid])->fetchColumn()) throw new Problem('В организации должен остаться активный владелец.',409);
         query($db,'UPDATE tasks SET assignee_id=NULL,version=version+1 WHERE assignee_id=? AND project_id IN (SELECT id FROM projects WHERE organization_id=?)',[$uid,$org]);
+        foreach (query($db,'SELECT project_id FROM project_members WHERE organization_id=? AND user_id=?',[$org,$uid])->fetchAll(PDO::FETCH_COLUMN) as $pid) auditEvent($db,$u,(int)$pid,'project.remove',$uid);
+        cancelPendingByCreator($db,$u,$uid);
         foreach (['team_members','project_members','organization_members'] as $table) query($db,"DELETE FROM $table WHERE organization_id=? AND user_id=?",[$org,$uid]);
         query($db,'UPDATE users SET session_version=session_version+1 WHERE id=?',[$uid]);
+        auditEvent($db,$u,null,'org.remove',$uid);
     });
 }
 function issueInvitation(PDO $db,array $user,string $email,string $role,int $hours): string {
@@ -112,7 +121,8 @@ function issueInvitation(PDO $db,array $user,string $email,string $role,int $hou
         if (query($db,'SELECT 1 FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=? AND LOWER(u.email)=?',[$org,$email])->fetchColumn()) throw new Problem('Участник уже состоит в организации.',409);
         query($db,'UPDATE invitations SET revoked_at=? WHERE organization_id=? AND email=? AND accepted_at IS NULL AND revoked_at IS NULL',[time(),$org,$email]);
         $token=bin2hex(random_bytes(32));
-        query($db,'INSERT INTO invitations(organization_id,email,role,token_hash,expires_at,created_by) VALUES(?,?,?,?,?,?)',[$org,$email,$role,hash('sha256',$token),time()+$hours*3600,$u['id']]);
+        $id=insertId($db,'INSERT INTO invitations(organization_id,email,role,token_hash,expires_at,created_by) VALUES(?,?,?,?,?,?)',[$org,$email,$role,hash('sha256',$token),time()+$hours*3600,$u['id']]);
+        auditEvent($db,$u,null,'invite.issue',$id,$role);
         return $token;
     });
 }
@@ -120,6 +130,7 @@ function revokeInvitation(PDO $db,array $user,int $id): void {
     atomic($db,function() use($db,$user,$id) {
         $u=orgOwner($db,$user);
         if (!query($db,'UPDATE invitations SET revoked_at=? WHERE id=? AND organization_id=? AND revoked_at IS NULL AND accepted_at IS NULL',[time(),$id,$u['organization_id']])->rowCount()) throw new Problem('Активное приглашение не найдено.',404);
+        auditEvent($db,$u,null,'invite.revoke',$id);
     });
 }
 function acceptInvitation(PDO $db,string $token,?array $user,string $name='',string $password=''): array {
@@ -137,6 +148,7 @@ function acceptInvitation(PDO $db,string $token,?array $user,string $name='',str
         if (query($db,'SELECT 1 FROM organization_members WHERE organization_id=? AND user_id=?',[$inv['organization_id'],$uid])->fetchColumn()) throw new Problem('Участник уже зарегистрирован.',409);
         query($db,'INSERT INTO organization_members VALUES(?,?,?)',[$inv['organization_id'],$uid,$inv['role']]);
         query($db,'UPDATE invitations SET accepted_at=?,accepted_by=? WHERE id=?',[time(),$uid,$inv['id']]);
+        auditEvent($db,['organization_id'=>$inv['organization_id'],'id'=>$uid],null,'invite.accept',(int)$inv['id']);
         return ['id'=>$uid,'organization_id'=>(int)$inv['organization_id']];
     });
 }
@@ -148,15 +160,18 @@ function connectionAllowed(PDO $db,array $user,string $key): bool {
     return (int)$org===$u['organization_id'];
 }
 function scopedConnections(PDO $db,array $user,?int $projectId=null): array {
-    $u=organizationUser($db,$user); permit($u,'connections');
+    $u=organizationUser($db,$user);
+    if ($projectId!==null) requireProjectRight($db,$u,$projectId,'connections');
+    elseif (!hasProjectRight($db,$u,'connections') && !can($u,'connections')) throw new Problem('Нет доступа к подключениям.',403);
     $items=connectionViews($db);
     $keys=[];
-    if ($projectId!==null && $u['role']!=='owner') {
+    $catalog=$u['role']==='owner';
+    if ($projectId!==null && !$catalog) {
         allowedProject($db,$u,$projectId);
         $keys=query($db,'SELECT connection_key FROM project_connections WHERE project_id=?',[$projectId])->fetchAll(PDO::FETCH_COLUMN);
     } elseif ($projectId===null && $u['role']!=='owner') {
-        [$scope,$args]=projectScope($db,$u);
+        [$scope,$args]=projectRightScope($db,$u,'connections');
         $keys=query($db,"SELECT DISTINCT c.connection_key FROM project_connections c JOIN projects p ON p.id=c.project_id WHERE $scope",$args)->fetchAll(PDO::FETCH_COLUMN);
     }
-    return array_filter($items,fn($c,$key)=>connectionAllowed($db,$u,$key) && ($u['role']==='owner' || in_array($key,$keys,true)),ARRAY_FILTER_USE_BOTH);
+    return array_filter($items,fn($c,$key)=>connectionAllowed($db,$u,$key) && ($catalog || in_array($key,$keys,true)),ARRAY_FILTER_USE_BOTH);
 }

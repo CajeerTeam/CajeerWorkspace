@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.2.0
+CajeerWorkspace PHP 0.2.1
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -77,6 +77,7 @@ try {
     }
     if ($command === 'upgrade') {
         if ($argc > 3) throw new Problem('Формат: upgrade [абсолютный путь копии]');
+        if (postgresSelected() && $argc!==2) throw new Problem('Для PostgreSQL создайте проверенный pg_dump отдельно и выполните upgrade без пути SQLite.');
         database(false,true,$argv[2]??null,static function(array $backup) {
             echo 'Предварительная копия: ',json_encode($backup,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),PHP_EOL;
             fflush(STDOUT);

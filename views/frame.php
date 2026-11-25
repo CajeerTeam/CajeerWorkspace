@@ -4,9 +4,10 @@ unset($_SESSION['notice']);
 $nav = ['overview'=>'Обзор','projects'=>'Проекты'];
 if ($user && !empty($user['organization_id'])) {
     $nav['search']='Поиск';
-    if (can($user,'finance')) $nav['finance']='Финансы';
-    if (can($user,'legal')) $nav['documents']='Документы';
-    if (can($user,'connections')) $nav['connections']='Подключения';
+    if (($user['nav_rights']['finance']??can($user,'finance'))) { $nav['finance']='Финансы'; $nav['payments']='Платежи'; }
+    if (($user['nav_rights']['legal']??can($user,'legal'))) $nav['documents']='Документы';
+    if (($user['nav_rights']['connections']??can($user,'connections'))) $nav['connections']='Подключения';
+    if ($user['nav_rights']['audit']??false) $nav['audit']='Аудит';
     if (can($user,'people')) $nav['team']='Команда';
 }
 if ($user) $nav['invite']='Приглашение';

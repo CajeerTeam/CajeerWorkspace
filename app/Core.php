@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.2.0';
-const SCHEMA_VERSION = 4;
+const VERSION = '0.2.1';
+const SCHEMA_VERSION = 5;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -128,6 +128,18 @@ function calendarDate(mixed $value, bool $optional = false): ?string {
     return $value;
 }
 
+function actionProject(PDO $db,string $name,int $id): array {
+    [$project,$right]=match($name) {
+        'project.create'=>[$id,'manage'],
+        'connection.attach','connection.detach'=>[$id,'operations'],
+        'task.create','task.state'=>[(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],$name==='task.create'?'manage':'work'],
+        'cash.post','cash.reverse'=>[(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'],'payment.create'],
+        'payment.submit','payment.reverse','payment.cancel','payment.approve','payment.reject'=>[(int)entity($db,'SELECT project_id FROM payment_requests WHERE id=?',[$id])['project_id'],in_array($name,['payment.approve','payment.reject'],true)?'payment.approve':'payment.create'],
+        'document.version'=>[(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],'legal.write'],
+        default=>throw new Problem('Неизвестная операция.',409)
+    };
+    return [$project,$right];
+}
 function action(PDO $db, array $user, string $key, string $name, array $data, callable $write): int {
     if (!preg_match('/\A[a-f0-9]{32}\z/', $key)) throw new Problem('Обновите форму и повторите операцию.');
     $digest = hash('sha256', json_encode([$name,$user['organization_id']??1,$data], JSON_THROW_ON_ERROR));
@@ -138,18 +150,15 @@ function action(PDO $db, array $user, string $key, string $name, array $data, ca
         if ($old) {
             if (!hash_equals($old['fingerprint'], $digest)) throw new Problem('Содержимое повторного запроса изменилось. Обновите форму.', 409);
             $id=(int)$old['object_id'];
-            $projectId=match($name) {
-                'project.create','connection.attach','connection.detach'=>$id,
-                'task.create','task.state'=>(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],
-                'cash.post','cash.reverse'=>(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'],
-                'document.version'=>(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],
-                default=>throw new Problem('Неизвестная операция.',409)
-            };
-            allowedProject($db,$fresh,$projectId);
+            [$project,$right]=actionProject($db,$name,$id);
+            requireProjectRight($db,$fresh,$project,$right);
             return $id;
         }
         $id = $write();
+        [$project,$right]=actionProject($db,$name,$id);
+        requireProjectRight($db,$fresh,$project,$right);
         query($db, 'INSERT INTO action_log(actor_id,request_key,fingerprint,action,object_id) VALUES(?,?,?,?,?)', [$user['id'],$key,$digest,$name,$id]);
+        auditEvent($db,$fresh,$project,$name,$id);
         return $id;
     });
 }
