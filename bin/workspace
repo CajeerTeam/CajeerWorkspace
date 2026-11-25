@@ -56,6 +56,11 @@ CajeerWorkspace PHP 0.4.0
   php bin/workspace github:work [LIMIT]
   php bin/workspace github:check
   php bin/workspace infra:sync HOST_ID OWNER_ID
+  php bin/workspace deploy:target SITE_ID
+  php bin/workspace deploy:pending SITE_ID
+  php bin/workspace deploy:tick SITE_ID
+  php bin/workspace deploy:work DEPLOYMENT_ID
+  php bin/workspace deploy:recover DEPLOYMENT_ID
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -126,6 +131,23 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'deploy:target':
+            if($argc!==3)throw new Problem('Формат: deploy:target SITE_ID');
+            $site=entity($db,'SELECT * FROM infra_sites WHERE id=?',[numberId($argv[2])]);
+            echo json_encode(deploymentIdentity($db,(int)$site['project_id'],(int)$site['id'],(int)$site['organization_id']),JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES),PHP_EOL; break;
+        case 'deploy:tick':
+            if($argc!==3)throw new Problem('Формат: deploy:tick SITE_ID');
+            $id=query($db,"SELECT id FROM deployments WHERE site_id=? AND state='queued' AND window_start<=? ORDER BY id LIMIT 1",[numberId($argv[2]),time()])->fetchColumn();
+            if($id===false){echo "No queued deployment ready.\n";break;}
+            $result=deploymentRun($db,(int)$id);echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),PHP_EOL;exit($result['state']==='succeeded'?0:1);
+        case 'deploy:pending':
+            if($argc!==3)throw new Problem('Формат: deploy:pending SITE_ID');
+            $site=numberId($argv[2]);
+            echo json_encode(query($db,"SELECT id,site_id,state,window_start,window_end FROM deployments WHERE site_id=? AND state IN ('queued','running','recovery_required') ORDER BY id",[$site])->fetchAll(),JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT),PHP_EOL; break;
+        case 'deploy:work': case 'deploy:recover':
+            if($argc!==3)throw new Problem('Формат: deploy:work|deploy:recover DEPLOYMENT_ID');
+            $result=deploymentRun($db,numberId($argv[2]),$command==='deploy:recover');
+            echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),PHP_EOL; exit($result['state']==='succeeded'?0:1);
         case 'infra:sync':
             if($argc!==4) throw new Problem('Формат: infra:sync HOST_ID OWNER_ID');
             $hid=numberId($argv[2]); $host=entity($db,'SELECT organization_id FROM infra_hosts WHERE id=?',[$hid]);

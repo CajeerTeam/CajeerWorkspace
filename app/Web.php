@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,11 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'deploy.create': case 'deploy.cancel':
+            $pid=$projectId();
+            if($act==='deploy.create') deploymentCreate($db,$user,$pid,$key,$_POST);
+            else deploymentCancel($db,$user,$pid,numberId($_POST['id']??0));
+            $_SESSION['notice']='Задание развёртывания сохранено.'; go('deployments',['project'=>$pid]);
         case 'infra.host': case 'infra.sync': case 'infra.environment': case 'infra.bind': case 'infra.detach': case 'infra.owner': case 'infra.deletehost':
             $pid=$projectId(); orgOwner($db,$user); allowedProject($db,$user,$pid);
             if($act==='infra.host') infraHostCreate($db,$user,$_POST);
@@ -334,6 +339,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'deployments':
+            $data=deploymentPage($db,$user,numberId($_GET['project']??0)); break;
         case 'infrastructure':
             $data=infraPage($db,$user,numberId($_GET['project']??0)); break;
         case 'releases':

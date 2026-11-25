@@ -139,11 +139,11 @@ function infraChange(PDO $db,array $user,int $project,string $act,array $in): vo
             query($db,'INSERT INTO infra_environments(organization_id,project_id,kind,name) VALUES(?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET name=excluded.name',[$org,$project,$kind,$name]); auditEvent($db,$u,$project,$act,$project,$kind); return;
         }
         if($act==='infra.detach'){
-            $site=numberId($in['site_id']??null); entity($db,'SELECT id FROM infra_sites WHERE id=? AND project_id=? AND organization_id=?',[$site,$project,$org]); query($db,'DELETE FROM infra_sites WHERE id=?',[$site]); auditEvent($db,$u,$project,$act,$site); return;
+            $site=numberId($in['site_id']??null); entity($db,'SELECT id FROM infra_sites WHERE id=? AND project_id=? AND organization_id=?',[$site,$project,$org]); if(query($db,'SELECT 1 FROM deployments WHERE site_id=?',[$site])->fetchColumn()) throw new Problem('Привязка имеет историю развёртываний и не может быть удалена.',409); query($db,'DELETE FROM infra_sites WHERE id=?',[$site]); auditEvent($db,$u,$project,$act,$site); return;
         }
         $hid=numberId($in['host_id']??null); $host=infraHost($db,$u,$hid);
         if($act==='infra.owner'){
-            $op=choice($in['operation']??'',INFRA_OPS); $provider=choice($in['provider']??'', ['aapanel'=>'','servers'=>'']); $responsible=numberId($in['responsible_id']??null);
+            $op=choice($in['operation']??'',INFRA_OPS); if($op==='site.deploy'&&query($db,"SELECT 1 FROM deployments d JOIN infra_sites s ON s.id=d.site_id WHERE s.host_id=? AND d.state IN ('running','recovery_required')",[$hid])->fetchColumn())throw new Problem('Сначала завершите или восстановите развёртывания хоста.',409); $provider=choice($in['provider']??'', ['aapanel'=>'','servers'=>'']); $responsible=numberId($in['responsible_id']??null);
             entity($db,'SELECT u.id FROM users u JOIN organization_members m ON m.user_id=u.id WHERE u.enabled=1 AND m.organization_id=? AND u.id=?',[$org,$responsible]);
             query($db,'INSERT INTO infra_operation_owners(host_id,operation,provider,responsible_id) VALUES(?,?,?,?) ON CONFLICT(host_id,operation) DO UPDATE SET provider=excluded.provider,responsible_id=excluded.responsible_id',[$hid,$op,$provider,$responsible]); auditEvent($db,$u,null,$act,$hid,$op.':'.$provider); return;
         }
