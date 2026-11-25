@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -131,6 +131,19 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'sprint.save': case 'sprint.state': case 'sprint.task': case 'availability.save': case 'rate.save': case 'time.save': case 'time.submit': case 'time.approve': case 'time.reject':
+            $pid=$projectId(); $week=weekStart($_POST['week']??''); $version=workloadInt($_POST['version']??null,0,PHP_INT_MAX); $sprint=optionalId($_POST['sprint_id']??'');
+            switch ($act) {
+                case 'sprint.save': $sprint=saveSprint($db,$user,$key,$pid,$sprint,$version,$_POST); break;
+                case 'sprint.state': sprintTransition($db,$user,$key,$pid,numberId($sprint),$version,choice($_POST['state']??'',SPRINT_STATES)); break;
+                case 'sprint.task': sprintTask($db,$user,$key,$pid,numberId($sprint),$version,numberId($_POST['task_id']??0),($_POST['remove']??'')==='1'?null:workloadInt($_POST['estimate_minutes']??null,0,60000)); break;
+                case 'availability.save': saveAvailability($db,$user,$key,$pid,numberId($_POST['member_id']??0),$week,workloadInt($_POST['minutes']??null,0,10080),$version); break;
+                case 'rate.save': saveRate($db,$user,$key,$pid,$version,$_POST); break;
+                case 'time.save': saveTime($db,$user,$key,$pid,$week,$version,$_POST); break;
+                case 'time.submit': submitTime($db,$user,$key,$pid,numberId($_POST['sheet_id']??0),$version); break;
+                case 'time.approve': case 'time.reject': decideTime($db,$user,$key,$pid,numberId($_POST['sheet_id']??0),$version,$act==='time.approve',word($_POST['decision_note']??'',500,'Решение',false)); break;
+            }
+            $_SESSION['notice']='Изменения сохранены.'; go('workload',['project'=>$pid,'week'=>$week]+($sprint?['sprint'=>$sprint]:[]));
         case 'guest.issue':
             $pair=word($_POST['version']??'',64,'Редакция');
             if (!preg_match('/\A([0-9]+):([0-9]+)\z/',$pair,$m)) throw new Problem('Выберите редакцию.');
@@ -260,6 +273,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'workload':
+            if (!$projectId) throw new Problem('Выберите проект.',404);
+            $data=workloadPage($db,$user,$projectId,weekStart($_GET['week']??gmdate('Y-m-d',strtotime('monday this week'))),optionalId($_GET['sprint']??'')); break;
         case 'search':
             $q=word($_GET['q']??'',120,'Поиск',false);
             $data=['term'=>$q,'matches'=>[]];

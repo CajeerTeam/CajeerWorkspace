@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.3.0';
-const SCHEMA_VERSION = 7;
+const VERSION = '0.3.1';
+const SCHEMA_VERSION = 8;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -130,7 +130,10 @@ function calendarDate(mixed $value, bool $optional = false): ?string {
 
 function actionProject(PDO $db,string $name,int $id): array {
     [$project,$right]=match($name) {
-        'project.create'=>[$id,'manage'],
+        'project.create','rate.save'=>[$id,'manage'],
+        'availability.save'=>[$id,'work'],
+        'sprint.save','sprint.state','sprint.task'=>[(int)entity($db,'SELECT project_id FROM sprints WHERE id=?',[$id])['project_id'],'manage'],
+        'time.save','time.submit','time.approve','time.reject'=>[(int)entity($db,'SELECT project_id FROM timesheets WHERE id=?',[$id])['project_id'],in_array($name,['time.approve','time.reject'],true)?'manage':'work'],
         'connection.attach','connection.detach'=>[$id,'operations'],
         'task.create','task.edit','task.state','task.dependency.add','task.dependency.remove'=>[(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],$name==='task.state'?'work':'manage'],
         'milestone.create','milestone.edit','milestone.state'=>[(int)entity($db,'SELECT project_id FROM milestones WHERE id=?',[$id])['project_id'],'manage'],

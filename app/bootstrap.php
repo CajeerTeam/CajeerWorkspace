@@ -10,6 +10,7 @@ require_once __DIR__ . '/Payments.php';
 require_once __DIR__ . '/Migrations.php';
 require_once __DIR__ . '/Postgres.php';
 require_once __DIR__ . '/Planning.php';
+require_once __DIR__ . '/Workload.php';
 require_once __DIR__ . '/Workspace.php';
 require_once __DIR__ . '/Integrations.php';
 require_once __DIR__ . '/Oidc.php';
