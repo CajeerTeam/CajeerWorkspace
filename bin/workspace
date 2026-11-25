@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.7.2
+CajeerWorkspace PHP 0.7.3
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -65,6 +65,10 @@ CajeerWorkspace PHP 0.7.2
   php bin/workspace deploy:work DEPLOYMENT_ID
   php bin/workspace deploy:recover DEPLOYMENT_ID
   php bin/workspace sign:tick [LIMIT]
+  php bin/workspace lite:inspect SITE_ID OWNER_ID
+  php bin/workspace lite:work JOB_ID
+  php bin/workspace lite:restore JOB_ID --offline
+  php bin/workspace lite:reconcile JOB_ID [--offline]
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -135,6 +139,15 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'lite:inspect': case 'lite:work': case 'lite:restore': case 'lite:reconcile':
+            require ROOT.'/app/LiteWorker.php';
+            $offline=($argv[3]??'')==='--offline';
+            if($command==='lite:inspect'){if($argc!==4)throw new Problem('Формат: lite:inspect SITE_ID OWNER_ID');$report=liteInspect($db,numberId($argv[2]),numberId($argv[3]));}
+            elseif($command==='lite:work'){if($argc!==3)throw new Problem('Формат: lite:work JOB_ID');$report=litePublish($db,numberId($argv[2]));}
+            elseif($command==='lite:restore'){if($argc!==4||!$offline)throw new Problem('Формат: lite:restore JOB_ID --offline');$report=liteRestore($db,numberId($argv[2]),true);}
+            else {if($argc!==3&&($argc!==4||!$offline))throw new Problem('Формат: lite:reconcile JOB_ID [--offline]');$report=liteReconcile($db,numberId($argv[2]),$offline);}
+            echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL;
+            exit(!isset($report['state'])||in_array($report['state'],['published','restored','aborted'],true)?0:1);
         case 'retention:preview': case 'retention:cleanup': case 'retention:objects':
             if($argc<4||$argc>($command==='retention:objects'?6:5))throw new Problem('Формат: retention:MODE ORG_ID OWNER_ID [LIMIT] [MIN_BYTES]');
             echo signJson(retentionBatch($db,['id'=>numberId($argv[3]),'organization_id'=>numberId($argv[2])],substr($command,10),isset($argv[4])?numberId($argv[4]):100,isset($argv[5])?numberId($argv[5]):1048576)),PHP_EOL;break;

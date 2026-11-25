@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,14 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'lite.bind':
+            $pid=$projectId();$sid=liteBind($db,$user,$pid,word($_POST['target']??'',48,'Цель Lite'),word($_POST['name']??'',120,'Сайт'));go('lite',['project'=>$pid,'site'=>$sid]);
+        case 'lite.toggle':
+            $pid=$projectId();$sid=numberId($_POST['site_id']??0);liteToggle($db,$user,$pid,$sid,choice($_POST['active']??'', ['0'=>'off','1'=>'on'])==='1');go('lite',['project'=>$pid,'site'=>$sid]);
+        case 'lite.queue':
+            $pid=$projectId();$sid=numberId($_POST['site_id']??0);liteQueue($db,$user,$pid,$sid,$key,$_POST);go('lite',['project'=>$pid,'site'=>$sid]);
+        case 'lite.restore': case 'lite.cancel':
+            $pid=$projectId();$sid=numberId($_POST['site_id']??0);if($act==='lite.restore'&&($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите восстановление.');liteCommand($db,$user,$pid,$sid,numberId($_POST['job_id']??0),$act==='lite.restore'?'restore':'cancel');go('lite',['project'=>$pid,'site'=>$sid]);
         case 'forum.bind':
             $pid=$projectId();$sid=forumBind($db,$user,$pid,word($_POST['connection']??'',48,'Подключение'),forumId($_POST['board']??null));go('forum',['project'=>$pid,'source'=>$sid]);
         case 'forum.toggle':
@@ -410,6 +418,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'lite':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=litePage($db,$user,$projectId,$_GET);break;
         case 'forum':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=forumPage($db,$user,$projectId,$_GET);break;
         case 'book':

@@ -1,0 +1,51 @@
+-- One trusted local installation belongs to exactly one project.
+CREATE TABLE lite_sites (
+ id INTEGER PRIMARY KEY,
+ organization_id INTEGER NOT NULL,
+ project_id INTEGER NOT NULL,
+ target_key TEXT NOT NULL UNIQUE,
+ root_hash TEXT NOT NULL UNIQUE CHECK(length(root_hash)=64),
+ config_hash TEXT NOT NULL CHECK(length(config_hash)=64),
+ origin TEXT NOT NULL UNIQUE,
+ name TEXT NOT NULL,
+ active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+ inspected_at INTEGER,
+ site_hash TEXT CHECK(site_hash IS NULL OR length(site_hash)=64),
+ catalog TEXT,
+ created_by INTEGER NOT NULL REFERENCES users(id),
+ created_at INTEGER NOT NULL,
+ UNIQUE(project_id,id),
+ FOREIGN KEY(organization_id,project_id) REFERENCES projects(organization_id,id),
+ CHECK((inspected_at IS NULL AND site_hash IS NULL AND catalog IS NULL) OR (inspected_at IS NOT NULL AND site_hash IS NOT NULL AND catalog IS NOT NULL))
+);
+CREATE TABLE lite_jobs (
+ id INTEGER PRIMARY KEY,
+ project_id INTEGER NOT NULL,
+ site_id INTEGER NOT NULL,
+ request_key TEXT NOT NULL CHECK(length(request_key)=32),
+ kind TEXT NOT NULL CHECK(kind IN ('draft','book')),
+ path TEXT NOT NULL,
+ expected_hash TEXT NOT NULL CHECK(length(expected_hash)=64),
+ page_revision TEXT CHECK(page_revision IS NULL OR length(page_revision)=64),
+ edition_id INTEGER,
+ payload TEXT NOT NULL,
+ payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64),
+ state TEXT NOT NULL CHECK(state IN ('queued','running','published','conflict','uncertain','cancelled','aborted','restore_queued','restoring','restored','restore_uncertain')),
+ actor_id INTEGER NOT NULL REFERENCES users(id),
+ restore_by INTEGER REFERENCES users(id),
+ backup_name TEXT,
+ backup_hash TEXT CHECK(backup_hash IS NULL OR length(backup_hash)=64),
+ before_content TEXT CHECK(before_content IS NULL OR length(before_content)=64),
+ after_hash TEXT CHECK(after_hash IS NULL OR length(after_hash)=64),
+ after_content TEXT CHECK(after_content IS NULL OR length(after_content)=64),
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ detail TEXT NOT NULL DEFAULT '',
+ UNIQUE(site_id,request_key),
+ FOREIGN KEY(project_id,site_id) REFERENCES lite_sites(project_id,id),
+ FOREIGN KEY(project_id,edition_id) REFERENCES book_editions(project_id,id),
+ CHECK((kind='draft' AND edition_id IS NULL AND page_revision IS NOT NULL) OR (kind='book' AND edition_id IS NOT NULL)),
+ CHECK((backup_name IS NULL AND backup_hash IS NULL AND before_content IS NULL AND after_hash IS NULL AND after_content IS NULL) OR (backup_name IS NOT NULL AND backup_hash IS NOT NULL AND before_content IS NOT NULL AND after_hash IS NOT NULL AND after_content IS NOT NULL))
+);
+CREATE UNIQUE INDEX lite_one_pending ON lite_jobs(site_id) WHERE state IN ('queued','running','uncertain','restore_queued','restoring','restore_uncertain');
+CREATE INDEX lite_jobs_project ON lite_jobs(project_id,id);

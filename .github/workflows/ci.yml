@@ -89,6 +89,14 @@ jobs:
       - run: php tests/book_db.php
       - run: python3 tests/forum_schema.py
       - run: php tests/forum_db.php
+      - run: python3 tests/lite_schema.py
+      - uses: actions/checkout@v4
+        with:
+          repository: CajeerTeam/CajeerEngineLite
+          ref: c6a52cbbe4fe123dacdf19b1cfd4ed9b15e0a587
+          path: .ci-lite
+          persist-credentials: false
+      - run: WORKSPACE_LITE_TEST_SOURCE="$GITHUB_WORKSPACE/.ci-lite" php tests/lite_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -107,7 +115,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -184,3 +192,12 @@ jobs:
         run: php tests/book_db.php --postgres
       - if: matrix.suite == 'forum'
         run: php tests/forum_db.php --postgres
+      - if: matrix.suite == 'lite'
+        uses: actions/checkout@v4
+        with:
+          repository: CajeerTeam/CajeerEngineLite
+          ref: c6a52cbbe4fe123dacdf19b1cfd4ed9b15e0a587
+          path: .ci-lite
+          persist-credentials: false
+      - if: matrix.suite == 'lite'
+        run: WORKSPACE_LITE_TEST_SOURCE="$GITHUB_WORKSPACE/.ci-lite" php tests/lite_db.php --postgres
