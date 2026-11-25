@@ -11,6 +11,11 @@ try {
     $db = database();
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $page=word($_GET['p']??'overview',32,'Страница');
+    if ($page==='retention.share') {
+        if($method==='GET'){$token=word($_GET['token']??'',64,'Ссылка');retentionFindLink($db,$token);header('Content-Type: text/html; charset=utf-8');echo '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Выдача документа</title><h1>Скачать документ</h1><p>Выдача регистрируется, число скачиваний ограничено.</p><form method="post" action="./?p=retention.share"><input type="hidden" name="token" value="'.h($token).'"><button>Скачать PDF</button></form></html>';exit;}
+        if ($method!=='POST') {header('Allow: GET, POST');throw new Problem('Метод не поддерживается.',405);}
+        $bytes=retentionRedeem($db,word($_POST['token']??'',64,'Ссылка'));header('Content-Type: application/pdf');header('Content-Disposition: attachment; filename="shared-document.pdf"');header('Content-Length: '.strlen($bytes));echo $bytes;exit;
+    }
     if ($page==='sign.webhook') {
         if ($method!=='POST') { header('Allow: POST'); throw new Problem('Метод не поддерживается.',405); }
         signWebhook($db);

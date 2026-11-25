@@ -47,7 +47,7 @@ function authThrottle(PDO $db,string $bucket,int $limit=8): void {
 }
 function mfaFresh(): bool { return (int)($_SESSION['mfa_at']??0)>=time()-300 && ($_SESSION['mfa_at']??0)<=time(); }
 function sensitiveAction(string $act): bool {
-    return in_array($act,['rate.save','time.approve','time.reject'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice','accounting','bank','econ','tax','contract','prep','sign'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
+    return in_array($act,['rate.save','time.approve','time.reject'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice','accounting','bank','econ','tax','contract','prep','sign','retention'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
 }
 function requireMfa(string $act): void {
     if (sensitiveAction($act)&&!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность», затем повторите действие.',403);
@@ -94,6 +94,7 @@ function issueGuest(PDO $db,array $user,int $project,int $document,int $revision
         $u=orgOwner($db,$user); $p=allowedProject($db,$u,$project);
         if ($p['kind']!=='client') throw new Problem('Приглашение клиента доступно только для клиентского проекта.');
         entity($db,'SELECT d.id FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE d.project_id=? AND d.id=? AND v.revision=?',[$project,$document,$revision]);
+        retentionDocumentBytes($db,$document,$revision);
         if (query($db,'SELECT 1 FROM users WHERE LOWER(email)=?',[$email])->fetchColumn()) throw new Problem('Внутренние учётные записи не могут стать гостями.',409);
         if ($orderId!==null) { $order=clientOrder($db,$u,$orderId); if ((int)$order['project_id']!==$project || $order['contact_email']!==$email) throw new Problem('Приглашение должно соответствовать контакту заказа.',403); }
         $now=time(); query($db,'UPDATE guest_invites SET revoked_at=? WHERE project_id=? AND email=? AND accepted_at IS NULL AND revoked_at IS NULL',[$now,$project,$email]);
@@ -209,15 +210,14 @@ function guestPage(PDO $db,string $page): void {
     $order=guestClientOrder($db,(int)$g['id']);
     if ($page==='guest.result') {
         if (!$order) throw new Problem('Нет доступа к заказу.',403);
-        $r=entity($db,'SELECT '.(isPostgres($db)?"encode(v.bytes,'hex')":'v.bytes').' bytes,v.sha256 FROM client_deliveries d JOIN client_stages s ON s.id=d.stage_id JOIN document_versions v ON v.document_id=d.document_id AND v.revision=d.document_revision JOIN client_order_guests l ON l.order_id=s.order_id JOIN guest_invites g ON g.id=l.guest_id WHERE d.id=? AND l.guest_id=? AND g.revoked_at IS NULL AND g.access_until>?',[numberId($_GET['id']??0),$g['id'],time()]);
-        $bytes=isPostgres($db)?hex2bin($r['bytes']):$r['bytes']; if (!is_string($bytes)||!hash_equals($r['sha256'],hash('sha256',$bytes))) throw new Problem('Целостность PDF нарушена.',503);
+        $r=entity($db,'SELECT v.document_id,v.revision FROM client_deliveries d JOIN client_stages s ON s.id=d.stage_id JOIN document_versions v ON v.document_id=d.document_id AND v.revision=d.document_revision JOIN client_order_guests l ON l.order_id=s.order_id JOIN guest_invites g ON g.id=l.guest_id WHERE d.id=? AND l.guest_id=? AND g.revoked_at IS NULL AND g.access_until>?',[numberId($_GET['id']??0),$g['id'],time()]);
+        $bytes=retentionGuestBytes($db,$g,$r,'guest.result');
         header('Content-Type: application/pdf'); header('Content-Disposition: attachment; filename="client-result.pdf"'); header('Content-Length: '.strlen($bytes)); echo $bytes; return;
     }
     if ($page==='guest.download') {
         // Only the pinned revision; do not accept document or project IDs from the browser.
         $r=entity($db,'SELECT '.(isPostgres($db)?"encode(v.bytes,'hex')":"v.bytes").' bytes,v.sha256 FROM document_versions v JOIN guest_invites g ON g.document_id=v.document_id AND g.revision=v.revision WHERE g.id=? AND g.revoked_at IS NULL AND g.access_until>?',[$g['id'],time()]);
-        $bytes=isPostgres($db)?hex2bin($r['bytes']):$r['bytes'];
-        if (!is_string($bytes)||!hash_equals($r['sha256'],hash('sha256',$bytes))) throw new Problem('Целостность PDF нарушена.',503);
+        $bytes=retentionGuestBytes($db,$g,$r,'guest.download');
         header('Content-Type: application/pdf'); header('Content-Disposition: attachment; filename="client-document.pdf"'); header('Content-Length: '.strlen($bytes)); echo $bytes; return;
     }
     if (!in_array($page,['guest','overview','login'],true)) throw new Problem('Гостевой доступ ограничен согласованным проектом.',403);

@@ -74,7 +74,7 @@ function clientCommand(PDO $db,array $user,string $key,string $act,array $f): in
                     if ($latest && $latest['status']!=='returned') throw new Problem('Результат уже на приёмке или принят.',409);
                     if (!query($db,'SELECT 1 FROM client_stage_tasks WHERE stage_id=?',[$sid])->fetchColumn() || query($db,"SELECT 1 FROM client_stage_tasks st JOIN tasks t ON t.id=st.task_id WHERE st.stage_id=? AND t.state<>'done'",[$sid])->fetchColumn()) throw new Problem('Привяжите задачи и завершите их перед сдачей.',409);
                     $doc=null; $rev=null; $pair=word($f['document']??'',64,'Редакция PDF',false);
-                    if ($pair!=='') { if (!preg_match('/\A([0-9]+):([0-9]+)\z/',$pair,$m)) throw new Problem('Неверная редакция.'); $doc=numberId($m[1]); $rev=numberId($m[2]); entity($db,'SELECT d.id FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE d.project_id=? AND d.id=? AND v.revision=?',[$project,$doc,$rev]); }
+                    if ($pair!=='') { if (!preg_match('/\A([0-9]+):([0-9]+)\z/',$pair,$m)) throw new Problem('Неверная редакция.'); $doc=numberId($m[1]); $rev=numberId($m[2]); entity($db,'SELECT d.id FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE d.project_id=? AND d.id=? AND v.revision=?',[$project,$doc,$rev]); retentionDocumentBytes($db,$doc,$rev); }
                     query($db,'INSERT INTO client_deliveries(stage_id,project_id,revision,result_text,document_id,document_revision,submitted_by,submitted_at) VALUES(?,?,?,?,?,?,?,?)',[$sid,$project,1+(int)($latest['revision']??0),criteriaText($f['result_text']??''),$doc,$rev,$u['id'],time()]);
                 }
             } else throw new Problem('Неизвестное действие.',404);

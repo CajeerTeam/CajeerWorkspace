@@ -34,7 +34,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -61,21 +61,21 @@ const TRANSFER_TABLES = [
     'economics_settings'=>'project_id','economics_budgets'=>'id','economics_labor_rates'=>'id','economics_cash_classes'=>'cash_id','economics_plans'=>'id','economics_plan_cash'=>'plan_id,cash_id',
     'uk_vat_profiles'=>'entity_id','uk_vat_documents'=>'invoice_id',
     'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id',
-    'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id'
+    'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id','retention_policies'=>'id','retention_documents'=>'document_id','retention_holds'=>'id','retention_links'=>'id','retention_deliveries'=>'id'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
     $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_hash','week_on','request_key','delivery_id','source','operation'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
-    $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at":"*";
+    $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at,object_key,original_size,storage_state":"*";
     $stmt=$db->query("SELECT $columns FROM $table ORDER BY $order");
     while ($row=$stmt->fetch(PDO::FETCH_ASSOC)) {
         if ($table==='document_versions') {
             if (isPostgres($db)) $row['bytes']=hex2bin($row['bytes']);
             if (is_resource($row['bytes'])) $row['bytes']=stream_get_contents($row['bytes']);
-            if (!is_string($row['bytes']) || !hash_equals($row['sha256'],hash('sha256',$row['bytes']))) throw new Problem('Нарушена контрольная сумма PDF.',503);
+            if($row['storage_state']==='inline'){if(!is_string($row['bytes'])||!hash_equals($row['sha256'],hash('sha256',$row['bytes'])))throw new Problem('Нарушена контрольная сумма PDF.',503);}else{if($row['bytes']!==RETENTION_MARKER)throw new Problem('Нарушен указатель PDF.',503);if($row['storage_state']==='object')retentionObjectRead($row['object_key'],(int)$row['original_size'],$row['sha256']);}
         }
         if ($table==='signing_archive') {
-            $pdf=base64_decode($row['pdf_base64'],true);
+            $pdf=retentionSignedBytes($row);
             if($pdf===false||strlen($pdf)!==(int)$row['pdf_size']||!hash_equals($row['pdf_sha256'],hash('sha256',$pdf))||!hash_equals($row['status_sha256'],hash('sha256',$row['status_json'])))throw new Problem('Нарушена целостность архива подписания.',503);
         }
         if (in_array($table,['signing_callbacks','signing_receipts'],true)&&!hash_equals($row['payload_sha256'],hash('sha256',$row['payload'])))throw new Problem('Нарушена целостность квитанции подписания.',503);
@@ -91,7 +91,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.6.2.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.6.3.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

@@ -14,13 +14,13 @@ function contractResponsible(PDO $db,int $org,int $p,int $uid): bool {
 function contractPdf(PDO $db,int $p,mixed $raw,bool $main=false): array {
     if(!is_string($raw)||!preg_match('/\A([1-9][0-9]*):([1-9][0-9]*)\z/',$raw,$m))throw new Problem('Выберите конкретную редакцию PDF.');
     $d=entity($db,'SELECT d.id,d.kind,d.title,v.revision,v.sha256 FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE d.project_id=? AND d.id=? AND v.revision=?',[$p,numberId($m[1]),numberId($m[2])]);
+    if(retentionDocument($db,(int)$d['id'],(int)$d['revision'])['storage_state']==='purged')throw new Problem('Файл удалён.',410);
     if($main&&!in_array($d['kind'],['contract','nda','amendment'],true))throw new Problem('Основной PDF должен быть договором, NDA или дополнительным соглашением.');
     return $d;
 }
 function contractCheckPdf(PDO $db,array $d): void {
-    $expr=isPostgres($db)?"encode(bytes,'hex')":'hex(bytes)';
-    $hex=entity($db,"SELECT $expr payload FROM document_versions WHERE document_id=? AND revision=?",[$d['id'],$d['revision']])['payload'];
-    if(!hash_equals($d['sha256'],hash('sha256',hex2bin($hex))))throw new Problem('Содержимое PDF не соответствует SHA-256.',409);
+    $bytes=retentionDocumentBytes($db,(int)$d['id'],(int)$d['revision']);
+    if(!hash_equals($d['sha256'],hash('sha256',$bytes)))throw new Problem('Содержимое PDF не соответствует SHA-256.',409);
 }
 function contractLatest(PDO $db,int $id,bool $effective=false): ?array {
     return query($db,'SELECT * FROM contract_revisions WHERE contract_id=?'.($effective?' AND activated_at IS NOT NULL':'').' ORDER BY revision DESC LIMIT 1',[$id])->fetch()?:null;

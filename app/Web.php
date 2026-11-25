@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -137,18 +137,23 @@ function handlePost(PDO $db, ?array $user): never {
         if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
         $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
         if (!$user) { go('login'); }
-        $_SESSION['org']=$result['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
+        $_SESSION['org']=$result['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
     }
     if (!$user) go('login');
     if ($act==='logout') authLogout($db);
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
-    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'retention.policy': case 'retention.assign': case 'retention.hold': case 'retention.release': case 'retention.offload': case 'retention.restore': case 'retention.purge': case 'retention.link': case 'retention.revoke':
+            orgOwner($db,$user);if($act==='retention.policy'){retentionPolicy($db,$user,$_POST);go('retention');}
+            $doc=numberId($_POST['document_id']??0);$rev=numberId($_POST['revision']??0);$package=optionalId($_POST['package_id']??'');
+            match($act){'retention.assign'=>retentionAssign($db,$user,$doc,$rev,numberId($_POST['policy_id']??0),calendarDate($_POST['starts_on']??'')), 'retention.hold'=>retentionHold($db,$user,$doc,$rev,word($_POST['reason']??'',1000,'Основание')), 'retention.release'=>retentionHold($db,$user,$doc,$rev,word($_POST['reason']??'',1000,'Основание'),numberId($_POST['hold_id']??0)), 'retention.offload','retention.restore'=>retentionMove($db,$user,$doc,$rev,$act==='retention.restore',$package), 'retention.purge'=>($_POST['confirm']??'')==='yes'?retentionPurge($db,$user,$doc,$rev):throw new Problem('Подтвердите удаление.'), 'retention.revoke'=>retentionRevoke($db,$user,$doc,$rev,numberId($_POST['link_id']??0)), 'retention.link'=>$_SESSION['retention_link']=['token'=>retentionLink($db,$user,$doc,$rev,$package,numberId($_POST['minutes']??0),numberId($_POST['uses']??0),$key),'org'=>(int)$user['organization_id'],'doc'=>$doc,'rev'=>$rev,'actor'=>(int)$user['id']]};
+            go('retention',['id'=>$doc,'v'=>$rev]);
         case 'sign.create':
             $pid=$projectId();$id=signCreate($db,$user,$pid,$key,$_POST,signConfig());$_SESSION['notice']='Пакет поставлен в очередь.';go('signing',['project'=>$pid,'id'=>$id]);
         case 'sign.cancel': case 'sign.sync': case 'sign.adopt':
@@ -241,7 +246,7 @@ function handlePost(PDO $db, ?array $user): never {
         case 'guest.revoke':
             revokeGuest($db,$user,$projectId(),numberId($_POST['guest_id']??0)); go('project',['id'=>$projectId()]);
         case 'org.create':
-            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
+            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
         case 'org.rename':
             renameOrganization($db,$user,word($_POST['name']??'',120,'Организация')); go('team');
         case 'team.rename': case 'team.delete':
@@ -372,6 +377,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'retention':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=retentionPage($db,$user,optionalId($_GET['id']??''),optionalId($_GET['v']??''),optionalId($_GET['before']??''),optionalId($_GET['log_before']??''));break;
         case 'signing':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=signPage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['before']??''));break;
         case 'sign.download':
@@ -388,7 +395,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             require ROOT.'/views/preparation_print.php';return;
         case 'prep.act':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
-            $r=prepApprovedAct($db,$user,numberId($projectId),numberId($_GET['id']??0));$expr=isPostgres($db)?"encode(bytes,'hex')":'hex(bytes)';$bytes=hex2bin(entity($db,"SELECT $expr payload FROM document_versions WHERE document_id=? AND revision=?",[$r['document_id'],$r['document_revision']])['payload']);
+            $r=prepApprovedAct($db,$user,numberId($projectId),numberId($_GET['id']??0));$bytes=atomic($db,function()use($db,$user,$projectId,$r){$fresh=prepApprovedAct($db,$user,numberId($projectId),(int)$r['preparation_id']);if((int)$fresh['id']!==(int)$r['id'])throw new Problem('Редакция изменилась.',409);$b=retentionDocumentBytes($db,(int)$r['document_id'],(int)$r['document_revision']);retentionLog($db,(int)$r['document_id'],(int)$r['document_revision'],null,(int)$user['id'],null,null,'approved_act',$b);return $b;});
             if(!hash_equals($r['document_hash'],hash('sha256',$bytes)))throw new Problem('Хеш акта изменился.',409);header('Content-Type: application/pdf');header('Content-Disposition: attachment; filename="approved-act-'.$r['preparation_id'].'-v'.$r['revision'].'.pdf"');echo $bytes;return;
         case 'contracts':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
@@ -426,7 +433,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             break;
         case 'clients':
             $id=optionalId($_GET['id']??''); $data=clientsPage($db,$user,$id,numberId($_GET['n']??1));
-            if ($id!==null && ($_SESSION['client_token_order']??null)===$id) { $data['clientToken']=$_SESSION['client_token']??null; unset($_SESSION['client_token'],$_SESSION['client_token_order']); }
+            if ($id!==null && ($_SESSION['client_token_order']??null)===$id) { $data['clientToken']=$_SESSION['client_token']??null; unset($_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); }
             break;
         case 'workload':
             if (!$projectId) throw new Problem('Выберите проект.',404);
@@ -522,13 +529,13 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $id = numberId($_GET['id'] ?? 0);
             $data['doc'] = entity($db,"SELECT d.*,p.title project_title FROM documents d JOIN projects p ON d.project_id=p.id WHERE d.id=? AND $scope",[$id,...$scopeArgs]);
             $data['writable']=roleAllows(projectRole($db,$user,(int)$data['doc']['project_id']),'legal.write');
-            $data['versions'] = query($db,'SELECT v.revision,v.sha256,v.created_at,length(v.bytes) size,u.name FROM document_versions v JOIN users u ON v.actor_id=u.id WHERE document_id=? ORDER BY revision DESC',[$id])->fetchAll();
+            $data['versions'] = query($db,'SELECT v.revision,v.sha256,v.created_at,COALESCE(v.original_size,length(v.bytes)) size,v.storage_state,u.name FROM document_versions v JOIN users u ON v.actor_id=u.id WHERE document_id=? ORDER BY revision DESC',[$id])->fetchAll();
             break;
         case 'download':
             $id = numberId($_GET['id'] ?? 0); $rev = numberId($_GET['v'] ?? 0);
-            $doc = entity($db,"SELECT ".(isPostgres($db)?"encode(v.bytes,'hex')":"v.bytes")." AS bytes FROM document_versions v JOIN documents d ON d.id=v.document_id JOIN projects p ON p.id=d.project_id WHERE v.document_id=? AND v.revision=? AND $scope",[$id,$rev,...$scopeArgs]);
+            $doc = entity($db,"SELECT d.project_id FROM document_versions v JOIN documents d ON d.id=v.document_id JOIN projects p ON p.id=d.project_id WHERE v.document_id=? AND v.revision=? AND $scope",[$id,$rev,...$scopeArgs]);
             if (!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
-            if (isPostgres($db)) $doc['bytes']=hex2bin($doc['bytes']);
+            $doc['bytes']=atomic($db,function()use($db,$user,$doc,$id,$rev){requireProjectRight($db,$user,(int)$doc['project_id'],'legal');$b=retentionDocumentBytes($db,$id,$rev);retentionLog($db,$id,$rev,null,(int)$user['id'],null,null,'document',$b);return $b;});
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="document-'.$id.'-v'.$rev.'.pdf"');
             header('Content-Length: '.strlen($doc['bytes']));
@@ -553,7 +560,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
             if ($user['role']==='owner') {
                 $data['invitations']=query($db,'SELECT id,email,role,expires_at,accepted_at,revoked_at FROM invitations WHERE organization_id=? ORDER BY id DESC LIMIT 100',[$user['organization_id']])->fetchAll();
-                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']);
+                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']);
             }
             break;
         default: throw new Problem('Страница не найдена.',404);
