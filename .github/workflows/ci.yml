@@ -73,6 +73,8 @@ jobs:
       - run: php tests/tax_unit.php
       - run: python3 tests/tax_schema.py
       - run: php tests/tax_db.php
+      - run: python3 tests/contracts_schema.py
+      - run: php tests/contracts_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -91,7 +93,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -153,3 +155,6 @@ jobs:
         run: php tests/economics_db.php --postgres
       - if: matrix.suite == 'tax'
         run: php tests/tax_db.php --postgres
+
+      - if: matrix.suite == 'contracts'
+        run: php tests/contracts_db.php --postgres

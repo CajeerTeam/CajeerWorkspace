@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.5.4';
-const SCHEMA_VERSION = 19;
+const VERSION = '0.6.0';
+const SCHEMA_VERSION = 20;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -141,6 +141,7 @@ function actionProject(PDO $db,string $name,int $id): array {
         'milestone.create','milestone.edit','milestone.state'=>[(int)entity($db,'SELECT project_id FROM milestones WHERE id=?',[$id])['project_id'],'manage'],
         'cash.post','cash.reverse'=>[(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'],'payment.create'],
         'payment.submit','payment.reverse','payment.cancel','payment.approve','payment.reject'=>[(int)entity($db,'SELECT project_id FROM payment_requests WHERE id=?',[$id])['project_id'],in_array($name,['payment.approve','payment.reject'],true)?'payment.approve':'payment.create'],
+        'contract.create','contract.revise','contract.attach','contract.detach','contract.activate','contract.obligation','contract.decide'=>[(int)entity($db,'SELECT project_id FROM contracts WHERE id=?',[$id])['project_id'],'legal.write'],
         'document.version'=>[(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],'legal.write'],
         default=>throw new Problem('Неизвестная операция.',409)
     };

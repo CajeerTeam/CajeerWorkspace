@@ -1,4 +1,5 @@
 <?php namespace Workspace; ?>
+<p><a href="<?= h(url('contracts',['project'=>$selected])) ?>">Карточки договоров и обязательства</a></p>
 <p class="lede">Договоры, акты и другие документы с историей файлов.</p>
 <form method="get" class="filters"><input type="hidden" name="p" value="documents"><label>Проект<select name="project"><option value="">Все проекты</option><?php selectOptions($projects,$selected) ?></select></label><button class="secondary">Применить</button></form>
 <?php if ($writableProjects): ?><details class="editor" <?= !$docs?'open':'' ?>><summary>Загрузить документ</summary><form method="post" enctype="multipart/form-data" class="formgrid"><?php formFields('document.version') ?>
