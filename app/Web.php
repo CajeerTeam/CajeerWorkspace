@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -89,7 +89,12 @@ function handlePost(PDO $db, ?array $user): never {
     $act = word($_POST['act'] ?? '',32,'Действие');
     if (!empty($_SESSION['guest_id'])) {
         if ($act==='logout') authLogout($db);
-        throw new Problem('Гостевой кабинет доступен только для чтения.',403);
+        if (in_array($act,['guest.offer','guest.delivery'],true)) {
+            if (($_SESSION['auth_kind']??null)!=='oidc') throw new Problem('Требуется вход ID.',403);
+            clientGuestDecision($db,(int)$_SESSION['guest_id'],$act,numberId($_POST['id']??0),numberId($_POST['version']??0),choice($_POST['decision']??'',['accept'=>'','return'=>''])==='accept',word($_POST['note']??'',1000,'Комментарий',false),hash('sha256',$_SESSION['oidc_handle']));
+            $_SESSION['notice']='Решение сохранено.'; go('guest');
+        }
+        throw new Problem('Действие недоступно в гостевом кабинете.',403);
     }
     if (in_array($act,['oidc.begin','guest.begin','staff.begin'],true)) {
         if ($user || !oidcEnabled()) throw new Problem('Вход ID недоступен.',403);
@@ -119,18 +124,26 @@ function handlePost(PDO $db, ?array $user): never {
         if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
         $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
         if (!$user) { go('login'); }
-        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
+        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
     }
     if (!$user) go('login');
     if ($act==='logout') authLogout($db);
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
-    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'client.party': case 'client.contact': case 'client.request': case 'client.offer': case 'client.offer.edit': case 'client.stage': case 'client.stage.remove': case 'client.publish': case 'client.task': case 'client.deliver':
+            $oid=clientCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Изменения сохранены.'; go('clients',in_array($act,['client.party','client.contact'],true)?[]:['id'=>$oid]);
+        case 'client.invite':
+            $order=clientOrder($db,$user,numberId($_POST['order_id']??0)); $pair=word($_POST['document']??'',64,'Редакция');
+            if (!preg_match('/\A([0-9]+):([0-9]+)\z/',$pair,$m)) throw new Problem('Выберите редакцию PDF.');
+            $_SESSION['client_token']=issueGuest($db,$user,(int)$order['project_id'],numberId($m[1]),numberId($m[2]),$order['contact_email'],numberId($_POST['hours']??0),(int)$order['id']); $_SESSION['client_token_order']=(int)$order['id']; go('clients',['id'=>$order['id']]);
+        case 'client.revoke':
+            $order=clientOrder($db,$user,numberId($_POST['order_id']??0)); $gid=numberId($_POST['guest_id']??0); entity($db,'SELECT guest_id FROM client_order_guests WHERE order_id=? AND guest_id=?',[$order['id'],$gid]); revokeGuest($db,$user,(int)$order['project_id'],$gid); go('clients',['id'=>$order['id']]);
         case 'sprint.save': case 'sprint.state': case 'sprint.task': case 'availability.save': case 'rate.save': case 'time.save': case 'time.submit': case 'time.approve': case 'time.reject':
             $pid=$projectId(); $week=weekStart($_POST['week']??''); $version=workloadInt($_POST['version']??null,0,PHP_INT_MAX); $sprint=optionalId($_POST['sprint_id']??'');
             switch ($act) {
@@ -152,7 +165,7 @@ function handlePost(PDO $db, ?array $user): never {
         case 'guest.revoke':
             revokeGuest($db,$user,$projectId(),numberId($_POST['guest_id']??0)); go('project',['id'=>$projectId()]);
         case 'org.create':
-            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
+            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
         case 'org.rename':
             renameOrganization($db,$user,word($_POST['name']??'',120,'Организация')); go('team');
         case 'team.rename': case 'team.delete':
@@ -273,6 +286,10 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'clients':
+            $id=optionalId($_GET['id']??''); $data=clientsPage($db,$user,$id,numberId($_GET['n']??1));
+            if ($id!==null && ($_SESSION['client_token_order']??null)===$id) { $data['clientToken']=$_SESSION['client_token']??null; unset($_SESSION['client_token'],$_SESSION['client_token_order']); }
+            break;
         case 'workload':
             if (!$projectId) throw new Problem('Выберите проект.',404);
             $data=workloadPage($db,$user,$projectId,weekStart($_GET['week']??gmdate('Y-m-d',strtotime('monday this week'))),optionalId($_GET['sprint']??'')); break;
@@ -394,7 +411,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
             if ($user['role']==='owner') {
                 $data['invitations']=query($db,'SELECT id,email,role,expires_at,accepted_at,revoked_at FROM invitations WHERE organization_id=? ORDER BY id DESC LIMIT 100',[$user['organization_id']])->fetchAll();
-                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project']);
+                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order']);
             }
             break;
         default: throw new Problem('Страница не найдена.',404);

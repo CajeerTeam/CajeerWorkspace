@@ -15,3 +15,4 @@ require_once __DIR__ . '/Workspace.php';
 require_once __DIR__ . '/Integrations.php';
 require_once __DIR__ . '/Oidc.php';
 require_once __DIR__ . '/Auth.php';
+require_once __DIR__ . '/Clients.php';

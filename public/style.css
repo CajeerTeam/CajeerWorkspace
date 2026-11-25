@@ -171,3 +171,11 @@ code { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: any
 @media(max-width:1100px){.planning-board{grid-template-columns:1fr;}}
 
 textarea {font:inherit;min-width:0;width:100%;padding:8px 10px;border:1px solid #b9c6ba;border-radius:6px;resize:vertical;}
+
+/* Client orders */
+.client-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.client-stage { border-top: 1px solid #d9e0e8; margin-top: 1rem; padding: 1rem 0; }
+.client-stage .client-stage { margin-left: 1rem; }
+.guestmain:has(.client-stage) { max-width: 850px; }
+.panel details { margin: .75rem 0; }
+.panel details summary { cursor: pointer; padding: .4rem 0; }

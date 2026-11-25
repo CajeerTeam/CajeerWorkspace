@@ -3,6 +3,7 @@
 <?php if (roleAllows($projectRole,'finance')): ?><a href="<?= h(url('finance',['project'=>$id])) ?>">Финансы проекта</a><?php endif ?>
 <?php if (roleAllows($projectRole,'legal')): ?><a href="<?= h(url('documents',['project'=>$id])) ?>">Документы проекта</a><?php endif ?></div>
 <?php if (roleAllows($projectRole,'work')||roleAllows($projectRole,'finance')): ?><p><a class="secondary" href="<?= h(url('workload',['project'=>$id])) ?>">Спринты, загрузка и таймшиты</a></p><?php endif ?>
+<?php if ($user['role']==='owner' && $project['kind']==='client'): ?><p><a href="<?= h(url('clients')) ?>">Клиенты и заказы</a></p><?php endif ?>
 <?php require ROOT.'/views/planning.php'; ?>
 <?php if (roleAllows($projectRole,'connections')): ?><section class="panel"><div class="panelhead"><h2>Подключения проекта</h2></div>
 <?php if (!$links): ?><p class="empty">Подключения пока не привязаны.</p><?php endif ?>

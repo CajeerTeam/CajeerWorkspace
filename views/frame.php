@@ -4,6 +4,7 @@ unset($_SESSION['notice']);
 $nav = ['overview'=>'Обзор','projects'=>'Проекты'];
 if ($user && !empty($user['organization_id'])) {
     $nav['search']='Поиск';
+    if ($user['role']==='owner') $nav['clients']='Клиенты и заказы';
     if (($user['nav_rights']['finance']??can($user,'finance'))) { $nav['finance']='Финансы'; $nav['payments']='Платежи'; }
     if (($user['nav_rights']['legal']??can($user,'legal'))) $nav['documents']='Документы';
     if (($user['nav_rights']['connections']??can($user,'connections'))) $nav['connections']='Подключения';
