@@ -1,6 +1,6 @@
 <?php namespace Workspace; $id=(int)$project['id']; ?>
 <div class="projectmeta"><span class="pill"><?= h(PROJECT_KINDS[$project['kind']]) ?></span><?php if ($project['client']): ?><span>Заказчик · <?= h($project['client']) ?></span><?php endif ?>
-<?php if (roleAllows($projectRole,'finance')): ?><a href="<?= h(url('finance',['project'=>$id])) ?>">Финансы проекта</a><?php endif ?>
+<?php if (roleAllows($projectRole,'finance')): ?><a href="<?= h(url('finance',['project'=>$id])) ?>">Финансы проекта</a> · <a href="<?= h(url('economics',['project'=>$id])) ?>">Экономика проекта</a><?php endif ?>
 <?php if (roleAllows($projectRole,'legal')): ?><a href="<?= h(url('documents',['project'=>$id])) ?>">Документы проекта</a><?php endif ?></div>
 <?php if (roleAllows($projectRole,'work')||roleAllows($projectRole,'finance')): ?><p><a class="secondary" href="<?= h(url('workload',['project'=>$id])) ?>">Спринты, загрузка и таймшиты</a></p><?php endif ?>
 <?php if ($user['role']==='owner' && $project['kind']==='client'): ?><p><a href="<?= h(url('clients')) ?>">Клиенты и заказы</a></p><?php endif ?>

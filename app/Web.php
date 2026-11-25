@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,9 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'econ.settings': case 'econ.budget': case 'econ.rate': case 'econ.class': case 'econ.plan': case 'econ.allocate': case 'econ.cancel': case 'econ.reschedule': case 'econ.unallocate':
+            $pid=$projectId();$month=econMonth($_POST['report_month']??gmdate('Y-m'));$horizon=calendarDate($_POST['horizon']??gmdate('Y-m-d',time()+90*86400));
+            econCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Экономика проекта: изменения сохранены.';go('economics',['project'=>$pid,'month'=>substr($month,0,7),'horizon'=>$horizon]);
         case 'bank.account': case 'bank.rate': case 'bank.import': case 'bank.match': case 'bank.unmatch': case 'bank.reconcile':
             $form=$_POST;
             if($act==='bank.import' && isset($_FILES['statement_file']) && $_FILES['statement_file']['error']!==UPLOAD_ERR_NO_FILE){
@@ -358,6 +361,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'economics':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
+            $data=econPage($db,$user,$projectId,econMonth($_GET['month']??gmdate('Y-m')),calendarDate($_GET['horizon']??gmdate('Y-m-d',time()+90*86400)));break;
         case 'bank':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             $data=bankPage($db,$user,optionalId($_GET['account']??''),optionalId($_GET['statement']??''),optionalId($_GET['row']??''),choice($_GET['filter']??'unmatched',['all'=>'','unmatched'=>'','matched'=>'']),optionalId($_GET['after']??''));break;
