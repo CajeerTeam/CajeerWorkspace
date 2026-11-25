@@ -34,7 +34,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -61,7 +61,7 @@ const TRANSFER_TABLES = [
     'economics_settings'=>'project_id','economics_budgets'=>'id','economics_labor_rates'=>'id','economics_cash_classes'=>'cash_id','economics_plans'=>'id','economics_plan_cash'=>'plan_id,cash_id',
     'uk_vat_profiles'=>'entity_id','uk_vat_documents'=>'invoice_id',
     'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id',
-    'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id','retention_policies'=>'id','retention_documents'=>'document_id','retention_holds'=>'id','retention_links'=>'id','retention_deliveries'=>'id','engine_sites'=>'id','engine_publications'=>'id','book_sources'=>'id','book_editions'=>'id','book_reviews'=>'id','book_release_links'=>'id','forum_sources'=>'id','forum_topics'=>'id','forum_operations'=>'id','lite_sites'=>'id','lite_jobs'=>'id'
+    'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id','retention_policies'=>'id','retention_documents'=>'document_id','retention_holds'=>'id','retention_links'=>'id','retention_deliveries'=>'id','engine_sites'=>'id','engine_publications'=>'id','book_sources'=>'id','book_editions'=>'id','book_reviews'=>'id','book_release_links'=>'id','forum_sources'=>'id','forum_topics'=>'id','forum_operations'=>'id','lite_sites'=>'id','lite_jobs'=>'id','editorial_releases'=>'id','editorial_events'=>'id'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
@@ -91,7 +91,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.7.3.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.7.4.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

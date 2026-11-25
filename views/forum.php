@@ -3,7 +3,7 @@ $base=['project'=>$project,'kind'=>$kind]+($target?['target'=>$target]:[]);
 $selected=$source?['source'=>$source['id']]:[];
 function forumHidden(array $params):void{foreach($params as $key=>$value)if($value!==null)echo '<input type="hidden" name="',h($key),'" value="',h($value),'">';}
 ?>
-<section class="panel"><h2>Обсуждения проекта</h2><p>Содержимое читается непосредственно из Forum. Права проекта не заменяют ACL форума; для каждого пользователя нужен отдельный токен. Forum Edition <?= h(FORUM_EDITION) ?> · Engine <?= h(FORUM_CORE) ?>.</p>
+<section class="panel"><p><a href="<?= h(url('editorial',['project'=>$project]+($kind==='release'&&$target?['release'=>$target]:[]))) ?>">Редакторские выпуски проекта</a></p><h2>Обсуждения проекта</h2><p>Содержимое читается непосредственно из Forum. Права проекта не заменяют ACL форума; для каждого пользователя нужен отдельный токен. Forum Edition <?= h(FORUM_EDITION) ?> · Engine <?= h(FORUM_CORE) ?>.</p>
 <form method="get" class="inline"><input type="hidden" name="p" value="forum"><label>Проект<select name="project" required><option value="">Выберите</option><?php selectOptions($projects,$project) ?></select></label><button>Открыть</button></form>
 <?php if($project!==null): ?><p><a href="<?= h(url('project',['id'=>$project])) ?>">← Проект</a> · <a href="<?= h(url('forum',$base)) ?>">Разделы форума</a><?php if($target): ?> · <?= $kind==='task'?'Задача':'Выпуск' ?> #<?= (int)$target ?><?php endif ?></p><?php endif ?></section>
 <?php if($error): ?><p class="panel planning-warning"><?= h($error) ?></p><?php endif ?>

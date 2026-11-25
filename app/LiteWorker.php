@@ -44,7 +44,7 @@ function liteWorkerJob(PDO $db,int $id): array {
     $j=entity($db,'SELECT * FROM lite_jobs WHERE id=?',[$id]);$s=entity($db,'SELECT * FROM lite_sites WHERE id=? AND project_id=?',[$j['site_id'],$j['project_id']]);return [$j,$s,liteConfig($s)];
 }
 function liteJobActor(PDO $db,array $j,array $s,bool $restore=false): array {
-    $u=['id'=>(int)($restore?$j['restore_by']:$j['actor_id']),'organization_id'=>(int)$s['organization_id']];return $restore?orgOwner($db,$u):liteManager($db,$u,(int)$s['project_id']);
+    $u=['id'=>(int)($restore?$j['restore_by']:$j['actor_id']),'organization_id'=>(int)$s['organization_id']];if($restore)return orgOwner($db,$u);$u=liteManager($db,$u,(int)$s['project_id']);if($r=editorialForLiteJob($db,$j))editorialCheck($db,$u,$r);return $u;
 }
 /** Caller holds DB atomic lock. Do not expose native exception messages (paths, config). */
 function liteFinish(PDO $db,array $j,array $s,string $state,string $detail): array {
@@ -52,6 +52,7 @@ function liteFinish(PDO $db,array $j,array $s,string $state,string $detail): arr
     query($db,'UPDATE lite_sites SET catalog=NULL,site_hash=NULL,inspected_at=NULL WHERE id=?',[$s['id']]);
     $actor=(int)(in_array($j['state'],['restore_queued','restoring','restore_uncertain'],true)?$j['restore_by']:$j['actor_id']);
     auditEvent($db,['id'=>$actor,'organization_id'=>$s['organization_id']],(int)$s['project_id'],'lite.'.$state,(int)$j['id'],$detail);
+    if($r=editorialForLiteJob($db,$j)){$url=$state==='published'?$s['origin'].$j['path']:null;if($url!==null&&$r['cms_url']===null)query($db,'UPDATE editorial_releases SET cms_url=?,cms_confirmed_at=? WHERE id=?',[$url,time(),$r['id']]);editorialEvent($db,['id'=>$actor,'organization_id'=>$s['organization_id']],$r,'cms',$state,$url??'');}
     return ['id'=>(int)$j['id'],'state'=>$state,'detail'=>$detail];
 }
 function liteCandidate(PDO $db,array $j,array $s,array $u,array $state): array {

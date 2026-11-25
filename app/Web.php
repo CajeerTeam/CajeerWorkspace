@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,13 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'editorial.create':
+            $pid=$projectId();$form=$_POST;$parts=explode(':',word($_POST['page_choice']??'',1200,'Страница'),2);if(count($parts)!==2)throw new Problem('Выберите страницу.');$form['edition_id']=$parts[0];$form['page_key']=$parts[1];
+            if(($_POST['cms']??'')==='lite'){$parts=explode(':',word($_POST['lite_target']??'',100,'Цель'),2);if(count($parts)!==2)throw new Problem('Выберите сайт Lite.');$form['lite_site_id']=$parts[0];$form['lite_hash']=$parts[1];}
+            $id=editorialCreate($db,$user,$pid,$key,$form);go('editorial',['project'=>$pid,'id'=>$id]);
+        case 'editorial.cms': case 'editorial.forum': case 'editorial.retry': case 'editorial.abandon':
+            $pid=$projectId();$id=numberId($_POST['id']??0);if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите действие.');
+            if($act==='editorial.cms')editorialCms($db,$user,$pid,$id);elseif($act==='editorial.abandon')editorialAbandon($db,$user,$pid,$id);else editorialForum($db,$user,$pid,$id,$act==='editorial.retry'?'retry':'advance',word($_POST['attempt_key']??'',32,'Ключ попытки'));go('editorial',['project'=>$pid,'id'=>$id]);
         case 'lite.bind':
             $pid=$projectId();$sid=liteBind($db,$user,$pid,word($_POST['target']??'',48,'Цель Lite'),word($_POST['name']??'',120,'Сайт'));go('lite',['project'=>$pid,'site'=>$sid]);
         case 'lite.toggle':
@@ -418,6 +425,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'editorial':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=editorialPage($db,$user,$projectId,$_GET);break;
         case 'lite':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=litePage($db,$user,$projectId,$_GET);break;
         case 'forum':

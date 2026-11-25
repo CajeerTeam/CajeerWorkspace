@@ -117,11 +117,15 @@ function bookReview(PDO $db,array $u,int $project,int $id,string $hash,string $d
         query($db,'INSERT INTO book_reviews(project_id,edition_id,reviewer_id,decision,note,snapshot_hash,created_at) VALUES(?,?,?,?,?,?,?)',[$project,$id,$u['id'],$decision,$note,$hash,time()]);auditEvent($db,$u,$project,'book.review',$id,$decision);});
 }
 function bookLinkRelease(PDO $db,array $u,int $project,int $id,int $release,string $hash): int {
-    return atomic($db,function()use($db,$u,$project,$id,$release,$hash){$u=releaseManager($db,$u,$project);$r=bookEdition($db,$u,$project,$id);if(!hash_equals($r['snapshot_hash'],$hash)||bookReviewState($r,bookReviews($db,$r))!=='approved')throw new Problem('Требуются две рецензии именно этого снимка.',409);
+    return atomic($db,fn()=>bookLinkReleaseLocked($db,$u,$project,$id,$release,$hash));
+}
+/** Caller holds the database write lock. */
+function bookLinkReleaseLocked(PDO $db,array $u,int $project,int $id,int $release,string $hash): int {
+        $u=releaseManager($db,$u,$project);$r=bookEdition($db,$u,$project,$id);if(!hash_equals($r['snapshot_hash'],$hash)||bookReviewState($r,bookReviews($db,$r))!=='approved')throw new Problem('Требуются две рецензии именно этого снимка.',409);
         $rel=releaseRow($db,$project,$release);if($rel['state']!=='confirmed'||!is_string($rel['evidence'])||!is_string($rel['evidence_hash'])||!hash_equals($rel['evidence_hash'],hash('sha256',$rel['evidence'])))throw new Problem('Требуется подтверждённый выпуск с целостным снимком.',409);
         $old=query($db,'SELECT * FROM book_release_links WHERE release_id=? AND source_id=?',[$release,$r['source_id']])->fetch();if($old){if((int)$old['edition_id']===$id)return (int)$old['id'];throw new Problem('Редакция этой книги уже закреплена за выпуском.',409);}
         bookReviewer($db,$u,$project,(int)$r['reviewer_a']);bookReviewer($db,$u,$project,(int)$r['reviewer_b']);releaseRepo($db,$rel);
-        $link=insertId($db,'INSERT INTO book_release_links(project_id,release_id,source_id,edition_id,tag,commit_sha,release_hash,snapshot_hash,linked_by,linked_at) VALUES(?,?,?,?,?,?,?,?,?,?)',[$project,$release,$r['source_id'],$id,$rel['tag'],$rel['commit_sha'],$rel['evidence_hash'],$hash,$u['id'],time()]);auditEvent($db,$u,$project,'book.release',$link,$hash);return $link;});
+        $link=insertId($db,'INSERT INTO book_release_links(project_id,release_id,source_id,edition_id,tag,commit_sha,release_hash,snapshot_hash,linked_by,linked_at) VALUES(?,?,?,?,?,?,?,?,?,?)',[$project,$release,$r['source_id'],$id,$rel['tag'],$rel['commit_sha'],$rel['evidence_hash'],$hash,$u['id'],time()]);auditEvent($db,$u,$project,'book.release',$link,$hash);return $link;
 }
 function bookReleaseLinks(PDO $db,array $u,int $project,int $release): array {
     $u=bookActor($db,$u,$project);$out=[];foreach(query($db,'SELECT l.*,s.name,s.active FROM book_release_links l JOIN book_sources s ON s.id=l.source_id AND s.project_id=l.project_id WHERE l.project_id=? AND l.release_id=? ORDER BY l.id',[$project,$release])->fetchAll() as $row){try{bookSourceConfig($db,$u,bookSource($db,$u,$project,(int)$row['source_id']));$out[]=$row;}catch(Problem){}}return $out;
