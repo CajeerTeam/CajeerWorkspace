@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -169,10 +169,23 @@ function handlePost(PDO $db, ?array $user): never {
         case 'task.create':
             createTask($db,$user,$key,$projectId(),$_POST);
             $_SESSION['notice'] = 'Задача добавлена.'; go('project',['id'=>$projectId()]);
+        case 'task.edit':
+            $id=editTask($db,$user,$key,numberId($_POST['task_id']??0),numberId($_POST['version']??0),$_POST);
+            $_SESSION['notice']='План задачи сохранён.'; go('task',['id'=>$id]);
+        case 'task.dependency.add': case 'task.dependency.remove':
+            $id=changeDependency($db,$user,$key,numberId($_POST['task_id']??0),numberId($_POST['version']??0),numberId($_POST['prerequisite_id']??0),$act==='task.dependency.add');
+            $_SESSION['notice']='Зависимости сохранены.'; go('task',['id'=>$id]);
+        case 'milestone.create': case 'milestone.edit':
+            saveMilestone($db,$user,$key,$projectId(),$act==='milestone.edit'?numberId($_POST['milestone_id']??0):null,$act==='milestone.edit'?numberId($_POST['version']??0):null,$_POST);
+            $_SESSION['notice']='Веха сохранена.'; go('project',['id'=>$projectId()]);
+        case 'milestone.state':
+            changeMilestone($db,$user,$key,$projectId(),numberId($_POST['milestone_id']??0),numberId($_POST['version']??0),choice($_POST['state']??'',MILESTONE_STATES));
+            $_SESSION['notice']='Статус вехи сохранён.'; go('project',['id'=>$projectId()]);
         case 'task.state':
             $id = changeTask($db,$user,$key,numberId($_POST['task_id'] ?? 0),numberId($_POST['version'] ?? 0),choice($_POST['state'] ?? '',STATES));
             $_SESSION['notice'] = 'Статус задачи сохранён.';
             $task = entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id]); allowedProject($db,$user,(int)$task['project_id']);
+            if (($_POST['return_to']??'')==='task') go('task',['id'=>$id]);
             go('project',['id'=>$task['project_id']]);
         case 'cash.post':
             $payment=submitPayment($db,$user,$key,$projectId(),paymentData($_POST));
@@ -253,23 +266,37 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             if ($q!=='') {
                 $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';
                 $data['matches']['projects']=query($db,"SELECT p.id,p.title FROM projects p WHERE $scope AND (LOWER(p.title) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.client) LIKE LOWER(?) ESCAPE '!') ORDER BY p.id DESC LIMIT 100",[...$scopeArgs,$like,$like])->fetchAll();
-                $data['matches']['tasks']=query($db,"SELECT t.title,t.project_id AS id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE $scope AND LOWER(t.title) LIKE LOWER(?) ESCAPE '!' ORDER BY t.id DESC LIMIT 100",[...$scopeArgs,$like])->fetchAll();
+                $taskSearch=planningSearchSql($db,['t.title','t.result_customer','t.acceptance_criteria']);
+                $data['matches']['tasks']=query($db,"SELECT t.id,t.title FROM tasks t JOIN projects p ON p.id=t.project_id WHERE $scope AND $taskSearch ORDER BY t.id DESC LIMIT 100",[...$scopeArgs,...array_fill(0,3,planningLike($q))])->fetchAll();
+                $milestoneSearch=planningSearchSql($db,['m.title']);
+                $data['matches']['milestones']=query($db,"SELECT m.id,m.title,m.project_id FROM milestones m JOIN projects p ON p.id=m.project_id WHERE $scope AND $milestoneSearch ORDER BY m.id DESC LIMIT 100",[...$scopeArgs,planningLike($q)])->fetchAll();
                 [$docScope,$docArgs]=projectRightScope($db,$user,'legal');
                 $data['matches']['documents']=query($db,"SELECT d.id,d.title FROM documents d JOIN projects p ON p.id=d.project_id WHERE $docScope AND LOWER(d.title) LIKE LOWER(?) ESCAPE '!' ORDER BY d.id DESC LIMIT 100",[...$docArgs,$like])->fetchAll();
             }
             break;
         case 'overview':
             $data['counts'] = query($db,"SELECT COUNT(DISTINCT p.id) projects,count(CASE WHEN t.state!='done' THEN 1 END) active,count(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE $scope",$scopeArgs)->fetch();
-            $data['tasks'] = query($db,"SELECT t.*,p.title project_title,u.name assignee FROM tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id
+            $blocked=planningBlockedSql(); $late=planningBlockedSql(true);
+            $data['tasks'] = query($db,"SELECT t.*,p.title project_title,u.name assignee,CASE WHEN $blocked THEN 1 ELSE 0 END blocked,CASE WHEN $late THEN 1 ELSE 0 END late_blocker FROM tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id
                 WHERE $scope AND t.state!='done' ORDER BY CASE WHEN t.assignee_id=? THEN 0 ELSE 1 END,t.due_on IS NULL,t.due_on,t.id LIMIT 8",[...$scopeArgs,$user['id']])->fetchAll();
             $data['recent'] = query($db,"SELECT p.* FROM projects p WHERE $scope ORDER BY p.id DESC LIMIT 4",$scopeArgs)->fetchAll();
             break;
         case 'projects':
             $data['projects'] = query($db,"SELECT p.*,COUNT(t.id) tasks,COUNT(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE $scope GROUP BY p.id ORDER BY p.id DESC",$scopeArgs)->fetchAll();
             break;
+        case 'task':
+            $t=planningTask($db,$user,numberId($_GET['id']??0)); $pid=(int)$t['project_id'];
+            $data=['task'=>$t,'projectRole'=>projectRole($db,$user,$pid),'dependencies'=>planningDependencies($db,$user,(int)$t['id']),'blocked'=>blockedTask($db,$pid,(int)$t['id'])];
+            if (roleAllows($data['projectRole'],'manage')) {
+                $data['assignable']=[];
+                foreach (planningPeople($db,$user,$pid) as $uid=>$name) if (roleAllows(projectRole($db,['id'=>$uid,'organization_id'=>$user['organization_id']],$pid),'work')) $data['assignable'][$uid]=$name;
+                $data['milestones']=planningMilestones($db,$pid);
+            }
+            break;
         case 'project':
             $p = allowedProject($db,$user,numberId($_GET['id'] ?? 0));
-            $data = ['project'=>$p,'tasks'=>query($db,"SELECT t.*,u.name assignee FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.state='done',t.due_on IS NULL,t.due_on,t.id",[$p['id']])->fetchAll()];
+            $filters=planningFilters($_GET); $pageNo=numberId($_GET['n']??1);
+            $data=['project'=>$p,'filters'=>$filters,'pageNo'=>$pageNo,'lanes'=>planningRows($db,$user,(int)$p['id'],$filters,$pageNo),'milestones'=>planningMilestones($db,(int)$p['id']),'people'=>planningPeople($db,$user,(int)$p['id'])];
             $data['projectRole']=projectRole($db,$user,(int)$p['id']);
             $data['dual']=dualControl($db,(int)$p['id']);
             if ($user['role']==='owner' && $p['kind']==='client') {
@@ -356,6 +383,6 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             break;
         default: throw new Problem('Страница не найдена.',404);
     }
-    $title = match ($page) { 'project'=>$data['project']['title'], 'document'=>$data['doc']['title'], default=>PAGE_TITLES[$page] };
+    $title = match ($page) { 'project'=>$data['project']['title'], 'task'=>$data['task']['title'], 'document'=>$data['doc']['title'], default=>PAGE_TITLES[$page] };
     pageView($page,$title,$user,$data);
 }

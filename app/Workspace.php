@@ -19,25 +19,29 @@ function createProject(PDO $db, array $user, string $key, array $form): int {
 function createTask(PDO $db, array $user, string $key, int $projectId, array $form): int {
     $user=organizationUser($db,$user);
     requireProjectRight($db,$user,$projectId,'manage');
-    $assignee = ($form['assignee'] ?? '') === '' ? null : numberId($form['assignee']);
-    $args = [$projectId,word($form['title'] ?? '',180,'Задача'),$assignee,calendarDate($form['due_on'] ?? '',true)];
-    allowedProject($db,$user,$projectId);
-    return action($db,$user,$key,'task.create',$args,static function () use ($db,$args,$projectId,$assignee,$user) {
+    $data=taskPlanData($form);
+    return action($db,$user,$key,'task.create',[$projectId,...$data],static function () use ($db,$data,$projectId,$user) {
         requireProjectRight($db,$user,$projectId,'manage');
-        if ($assignee !== null) { $candidate=organizationUser($db,['id'=>$assignee],$user['organization_id']); requireProjectRight($db,$candidate,$projectId,'work'); }
-        return insertId($db,'INSERT INTO tasks(project_id,title,assignee_id,due_on) VALUES(?,?,?,?)',$args);
+        [$title,$assignee,$due,$priority,$customer,$criteria,$milestone]=$data;
+        checkTaskAssignee($db,$user,$projectId,$assignee);
+        requireOpenMilestone($db,$projectId,$milestone);
+        $id=insertId($db,'INSERT INTO tasks(project_id,title,assignee_id,due_on,priority,result_customer,acceptance_criteria) VALUES(?,?,?,?,?,?,?)',[$projectId,$title,$assignee,$due,$priority,$customer,$criteria]);
+        setTaskMilestone($db,$projectId,$id,$milestone);
+        return $id;
     });
 }
 
 function changeTask(PDO $db, array $user, string $key, int $taskId, int $version, string $state): int {
     $user=organizationUser($db,$user);
     choice($state,STATES);
-    requireProjectRight($db,$user,(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$taskId])['project_id'],'work');
+    requireProjectRight($db,$user,(int)planningTask($db,$user,$taskId)['project_id'],'work');
     return action($db,$user,$key,'task.state',[$taskId,$version,$state],static function () use ($db,$user,$taskId,$version,$state) {
         $task = entity($db,'SELECT * FROM tasks WHERE id=?',[$taskId]);
         requireProjectRight($db,$user,(int)$task['project_id'],'work');
         if (!roleAllows(projectRole($db,$user,(int)$task['project_id']),'manage') && (int)$task['assignee_id'] !== (int)$user['id']) throw new Problem('Менять статус может исполнитель или менеджер.',403);
         if ((int)$task['version'] !== $version) throw new Problem('Задача уже изменилась. Обновите страницу проекта.',409);
+        if ($task['state']===$state) return $taskId;
+        checkTaskTransition($db,$task,$state);
         query($db,'UPDATE tasks SET state=?,version=version+1 WHERE id=?',[$state,$taskId]);
         return $taskId;
     });

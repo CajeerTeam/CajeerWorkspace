@@ -48,14 +48,14 @@ function seededLegacy(string $dir,int $version): array {
 }
 function businessData(PDO $db): array {
     $data=[];
-    foreach (['users','projects','tasks','cash_entries','documents','document_versions','connection_results'] as $table) $data[$table]=$db->query("SELECT ".($table==='projects'?'id,title,client,kind,created_at':'*')." FROM $table ORDER BY rowid")->fetchAll(PDO::FETCH_ASSOC);
+    foreach (['users','projects','tasks','cash_entries','documents','document_versions','connection_results'] as $table) $data[$table]=$db->query("SELECT ".(match($table) {'projects'=>'id,title,client,kind,created_at','tasks'=>'id,project_id,title,assignee_id,due_on,state,version',default=>'*'})." FROM $table ORDER BY rowid")->fetchAll(PDO::FETCH_ASSOC);
     return $data;
 }
 $root=sys_get_temp_dir().'/cws-migration-'.bin2hex(random_bytes(8));
 mkdir($root,0700); $checks=0;
 try {
     expectMigration(runtimeReport()['ok'],'Runtime requirements');
-    foreach ([1,2,3,4,5] as $version) {
+    foreach ([1,2,3,4,5,6] as $version) {
         $dir=$root.'/v'.$version; $expected=seededLegacy($dir,$version);
         putenv('WORKSPACE_DATA='.$dir);
         failsMigration(fn()=>database(),'Web refuses old schema');

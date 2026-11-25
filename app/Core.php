@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.2.2';
-const SCHEMA_VERSION = 6;
+const VERSION = '0.3.0';
+const SCHEMA_VERSION = 7;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -132,7 +132,8 @@ function actionProject(PDO $db,string $name,int $id): array {
     [$project,$right]=match($name) {
         'project.create'=>[$id,'manage'],
         'connection.attach','connection.detach'=>[$id,'operations'],
-        'task.create','task.state'=>[(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],$name==='task.create'?'manage':'work'],
+        'task.create','task.edit','task.state','task.dependency.add','task.dependency.remove'=>[(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],$name==='task.state'?'work':'manage'],
+        'milestone.create','milestone.edit','milestone.state'=>[(int)entity($db,'SELECT project_id FROM milestones WHERE id=?',[$id])['project_id'],'manage'],
         'cash.post','cash.reverse'=>[(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'],'payment.create'],
         'payment.submit','payment.reverse','payment.cancel','payment.approve','payment.reject'=>[(int)entity($db,'SELECT project_id FROM payment_requests WHERE id=?',[$id])['project_id'],in_array($name,['payment.approve','payment.reject'],true)?'payment.approve':'payment.create'],
         'document.version'=>[(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],'legal.write'],

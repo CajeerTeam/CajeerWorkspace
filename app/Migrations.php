@@ -52,7 +52,9 @@ function openDatabase(bool $install=false): PDO {
     if (getenv('WORKSPACE_DB') && getenv('WORKSPACE_DB')!=='sqlite') throw new Problem('Неизвестный WORKSPACE_DB.',503);
     $file=dataDir().'/workspace.sqlite';
     if (!$install && !is_file($file)) throw new Problem('Рабочее пространство ещё не установлено. Выполните bin/workspace init.',503);
-    $db=new PDO('sqlite:'.$file,null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+    $options=[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC];
+    // PHP 8.4+ exposes driver-specific methods on Pdo\Sqlite.
+    $db=method_exists(PDO::class,'connect') ? PDO::connect('sqlite:'.$file,null,null,$options) : new PDO('sqlite:'.$file,null,null,$options);
     $db->exec('PRAGMA busy_timeout=5000');
     $db->exec('PRAGMA foreign_keys=ON');
     return $db;

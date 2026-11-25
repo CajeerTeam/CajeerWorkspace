@@ -320,7 +320,7 @@ def run(tmp):
         task_url="?"+project_url
         for uid in range(2,7):
             expect(owner.post(task_url,"project.add",member_id=uid)[0]==200,"grant explicit project membership")
-        owner.post(task_url,"task.create",title="Release",assignee="4",due_on="2028-02-29")
+        owner.post(task_url,"task.create",title="Release",assignee="4",due_on="2028-02-29",result_customer="Team",acceptance_criteria="Build passes")
         dev=users["developer"]
         task=fields(dev.call(task_url)[1],"task.state")|{"state":"doing"}
         expect(dev.call(task_url,task)[0]==200,"assigned developer updates")

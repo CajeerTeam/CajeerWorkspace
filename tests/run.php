@@ -44,10 +44,10 @@ try {
     rejected(fn()=>createProject($db,$manager,$key,['title'=>'Другое']+$form),409,'Изменённое тело повтора');
     rejected(fn()=>createProject($db,$viewer,token(),$form),403,'Создание проекта наблюдателем');
     foreach ([$developer,$accountant,$legal,$viewer] as $member) changeMembership($db,$manager,'project',$pid,(int)$member['id'],true);
-    $tid=createTask($db,$manager,token(),$pid,['title'=>'Сборка','assignee'=>$developer['id'],'due_on'=>'2028-02-29']);
+    $tid=createTask($db,$manager,token(),$pid,['title'=>'Сборка','assignee'=>$developer['id'],'due_on'=>'2028-02-29','result_customer'=>'Команда','acceptance_criteria'=>'Сборка проходит']);
     changeTask($db,$developer,token(),$tid,1,'doing');
     rejected(fn()=>changeTask($db,$owner,token(),$tid,1,'done'),409,'Устаревшая задача');
-    $other=createTask($db,$manager,token(),$pid,['title'=>'Приёмка','assignee'=>$owner['id']]);
+    $other=createTask($db,$manager,token(),$pid,['title'=>'Приёмка','assignee'=>$owner['id'],'result_customer'=>'Команда','acceptance_criteria'=>'Результат принят']);
     rejected(fn()=>changeTask($db,$developer,token(),$other,1,'done'),403,'Чужая задача');
     rejected(fn()=>calendarDate('2026-02-29'),422,'Календарная дата');
     $cash=['amount'=>'0,10','currency'=>'EUR','direction'=>'income','memo'=>'=тест','booked_on'=>gmdate('Y-m-d')];

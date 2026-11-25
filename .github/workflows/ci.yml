@@ -32,6 +32,10 @@ jobs:
       - run: php tests/permissions_roles.php
       - run: python3 tests/permissions_schema.py
       - run: python3 tests/permissions_e2e.py
+      - run: php tests/planning_unit.php
+      - run: python3 tests/planning_schema.py
+      - run: php tests/planning_db.php
+      - run: python3 tests/planning_e2e.py
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -50,7 +54,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth']
+        suite: ['tenant', 'permissions', 'auth', 'planning']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -79,7 +83,9 @@ jobs:
           php-version: '8.4'
           extensions: pdo_sqlite, pdo_pgsql, curl, openssl
           coverage: none
-      - if: matrix.suite != 'auth'
+      - if: matrix.suite == 'tenant' || matrix.suite == 'permissions'
         run: python3 tests/${{ matrix.suite }}_e2e.py --postgres
       - if: matrix.suite == 'auth'
         run: php tests/auth_db.php --postgres
+      - if: matrix.suite == 'planning'
+        run: php tests/planning_db.php --postgres
