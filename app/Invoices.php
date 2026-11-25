@@ -51,10 +51,13 @@ function invoiceChange(PDO $db,array $user,int $project,int $id,string $key,stri
         'invoice.line'=>[word($form['description']??'',500,'Позиция'),invoiceQuantity($form['quantity']??0),moneyMinor($form['unit']??'')],
         'invoice.remove'=>[numberId($form['line_id']??0)],
         'invoice.terms'=>[calendarDate($form['due_on']??''),word($form['terms']??'',1000,'Условия оплаты')],
-        'invoice.issue','invoice.void'=>[],default=>throw new Problem('Неизвестная операция.')};
-    return action($db,$u,$key,$act,[$project,$id,$v,$payload],function()use($db,$u,$project,$id,$v,$act,$payload){
+        'invoice.issue'=>isset($form['uk_confirm'])?[word($form['uk_confirm'],1,'Подтверждение'),numberId($form['uk_profile_version']??0),calendarDate($form['tax_point']??''),word($form['buyer_address']??'',500,'Адрес покупателя')]:[],
+        'invoice.credit'=>[word($form['reason']??'',500,'Причина кредит-ноты')], 'invoice.void'=>[],default=>throw new Problem('Неизвестная операция.')};
+    return action($db,$u,$key,$act,[$project,$id,$v,$payload],function()use($db,$u,$project,$id,$v,$act,$payload,$form){
         $i=invoiceGet($db,$u,$project,$id,'payment.create'); if((int)$i['version']!==$v)throw new Problem('Счёт изменился. Обновите страницу.',409);
+        if($act==='invoice.credit'){ukCredit($db,$i,$u,$payload[0]);return $id;}
         if($act==='invoice.void'){
+            if(ukDocument($db,$id))throw new Problem('Для VAT-счёта необходима кредит-нота.',409);
             if($i['state']!=='issued'||query($db,"SELECT 1 FROM invoice_movements m JOIN payment_requests r ON r.id=m.request_id WHERE m.invoice_id=? AND r.status IN ('pending','posted')",[$id])->fetchColumn())throw new Problem('Нельзя аннулировать счёт с проведёнными или ожидающими платежами.',409);
             query($db,"UPDATE invoices SET state='void',voided_by=?,voided_at=?,version=version+1 WHERE id=?",[$u['id'],time(),$id]);return $id;
         }
@@ -68,13 +71,14 @@ function invoiceChange(PDO $db,array $user,int $project,int $id,string $key,stri
             $line=entity($db,'SELECT * FROM invoice_lines WHERE id=? AND invoice_id=?',[$payload[0],$id]);query($db,'DELETE FROM invoice_lines WHERE id=?',[$line['id']]);query($db,'UPDATE invoices SET total_minor=total_minor-?,version=version+1 WHERE id=?',[invoiceLineAmount((int)$line['quantity'],(int)$line['unit_minor']),$id]);
         }elseif($act==='invoice.terms')query($db,'UPDATE invoices SET due_on=?,terms=?,version=version+1 WHERE id=?',[...$payload,$id]);
         else{
-            $today=gmdate('Y-m-d');$year=(int)gmdate('Y');$total=0;foreach(invoiceLines($db,$id) as $l)$total+=invoiceLineAmount((int)$l['quantity'],(int)$l['unit_minor']);
+            $today=ukProfile($db,(int)$i['entity_id'])?ukToday():gmdate('Y-m-d');$year=(int)substr($today,0,4);$total=0;foreach(invoiceLines($db,$id) as $l)$total+=invoiceLineAmount((int)$l['quantity'],(int)$l['unit_minor']);
             if($total<1||$total!==(int)$i['total_minor']||$i['due_on']<$today)throw new Problem('Проверьте позиции, итог и срок оплаты.');
             if(!array_key_exists((int)$i['counterparty_id'],array_column(invoiceCounterparties($db,$u,$project),'name','id')))throw new Problem('Контрагент больше недоступен.',403);
-            $seller=entity($db,'SELECT name,registration,address,bank_details FROM legal_entities WHERE id=? AND organization_id=?',[$i['entity_id'],$u['organization_id']]);
+            $seller=entity($db,'SELECT name,registration,address,bank_details,version FROM legal_entities WHERE id=? AND organization_id=?',[$i['entity_id'],$u['organization_id']]);
             $buyer=entity($db,'SELECT name,registration FROM counterparties WHERE id=? AND organization_id=?',[$i['counterparty_id'],$u['organization_id']]);
+            $tax=ukIssue($db,$i,$seller,$form,$total,$today);if($tax){accountingCheckCashDate($db,$project,$today);$total=$tax['gross'];}unset($seller['version']);
             $seq=1+(int)query($db,'SELECT COALESCE(MAX(number_seq),0) FROM invoices WHERE entity_id=? AND number_year=?',[$i['entity_id'],$year])->fetchColumn();
-            query($db,"UPDATE invoices SET state='issued',number_year=?,number_seq=?,issued_on=?,issued_by=?,issuer_snapshot=?,client_snapshot=?,version=version+1 WHERE id=?",[$year,$seq,$today,$u['id'],json_encode($seller,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),json_encode($buyer,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$id]);
+            query($db,"UPDATE invoices SET state='issued',number_year=?,number_seq=?,issued_on=?,issued_by=?,issuer_snapshot=?,client_snapshot=?,total_minor=?,version=version+1 WHERE id=?",[$year,$seq,$today,$u['id'],json_encode($seller,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),json_encode($buyer,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$total,$id]);
         }
         return $id;
     });
@@ -88,7 +92,7 @@ function invoiceBalance(array $invoice,array $movements): array {
     $r['outstanding']=$invoice['state']==='issued'?(int)$invoice['total_minor']-$r['received']+$r['refunded']:0;return $r;
 }
 function invoiceValidateMovement(PDO $db,array $i,string $kind,int $amount,string $date,?int $original,?int $exclude=null): void {
-    if($i['state']!=='issued'||$date<$i['issued_on']||$date>gmdate('Y-m-d'))throw new Problem('Счёт не выставлен или дата движения недопустима.',409);
+    if($i['state']!=='issued'||$date<$i['issued_on']||$date>(ukDocument($db,(int)$i['id'])?ukToday():gmdate('Y-m-d')))throw new Problem('Счёт не выставлен или дата движения недопустима.',409);
     $rows=array_values(array_filter(invoiceMovements($db,(int)$i['id']),fn($m)=>(int)$m['id']!==$exclude));$b=invoiceBalance($i,$rows);
     if($kind==='receipt'){
         if($amount>$b['outstanding']-$b['pending_receipt'])throw new Problem('Сумма превышает остаток с учётом ожидающих оплат.',409);
@@ -126,7 +130,7 @@ function invoicePage(PDO $db,array $user,?int $project,?int $id,?int $before): a
     foreach($totals as &$t)foreach(['outstanding','overdue'] as $k){$n=filter_var($t[$k],FILTER_VALIDATE_INT);if($n===false)throw new Problem('Сумма превышает диапазон отчёта.',422);$t[$k]=$n;}unset($t);
     $rows=query($db,"SELECT i.*,p.title AS project_title, i.total_minor-COALESCE(b.paid,0) AS remaining $base".($before===null?'':' AND i.id<?').' ORDER BY i.id DESC LIMIT 51',$before===null?$args:[...$args,$before])->fetchAll();
     $projects=rightProjects($db,$u,'finance');$writable=rightProjects($db,$u,'payment.create');$entities=($u['role']==='owner'||($project!==null&&isset($writable[$project])))?query($db,'SELECT * FROM legal_entities WHERE organization_id=? ORDER BY name,id',[$u['organization_id']])->fetchAll():[];
-    $clients=$project!==null&&isset($writable[$project])?invoiceCounterparties($db,$u,$project):[];$invoice=null;$lines=$movements=$balance=[];
-    if($id!==null){if($project===null)throw new Problem('Выберите проект.');$invoice=invoiceGet($db,$u,$project,$id);$lines=invoiceLines($db,$id);$movements=invoiceMovements($db,$id);$balance=invoiceBalance($invoice,$movements);}
-    return compact('project','projects','writable','entities','clients','invoice','lines','movements','balance','totals')+['rows'=>array_slice($rows,0,50),'nextBefore'=>count($rows)>50?(int)$rows[49]['id']:null];
+    $clients=$project!==null&&isset($writable[$project])?invoiceCounterparties($db,$u,$project):[];$invoice=null;$taxDocument=$taxProfile=null;$lines=$movements=$balance=[];
+    if($id!==null){if($project===null)throw new Problem('Выберите проект.');$invoice=invoiceGet($db,$u,$project,$id);$lines=invoiceLines($db,$id);$movements=invoiceMovements($db,$id);$balance=invoiceBalance($invoice,$movements);$taxDocument=ukDocument($db,$id);$taxProfile=$invoice['state']==='draft'?ukProfile($db,(int)$invoice['entity_id']):null;}
+    return compact('project','projects','writable','entities','clients','invoice','lines','movements','balance','totals','taxDocument','taxProfile')+['rows'=>array_slice($rows,0,50),'nextBefore'=>count($rows)>50?(int)$rows[49]['id']:null];
 }

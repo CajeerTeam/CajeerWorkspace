@@ -184,3 +184,10 @@ textarea {font:inherit;min-width:0;width:100%;padding:8px 10px;border:1px solid 
 .oss-guest{width:min(100%,900px);margin:24px auto;padding:0 12px;display:grid;gap:16px;overflow-wrap:anywhere}.oss-guest .panel{margin:0}.oss-guest .splitrow{flex-wrap:wrap}.oss-guest textarea{min-height:100px}fieldset{min-width:0;border:1px solid #cbd5e1;border-radius:8px;padding:12px}fieldset label{display:flex;align-items:flex-start;gap:8px}fieldset input[type=checkbox]{width:auto;flex:none}
 
 .release-text{white-space:pre-wrap;overflow-wrap:anywhere}.release-choice{display:flex;align-items:center;gap:.5rem}.release-choice input{width:auto}.tablewrap code{overflow-wrap:anywhere}
+
+.tax-print { background: #fff; color: #111; padding: 2rem; }
+.tax-print main { max-width: 900px; margin: auto; }
+.tax-print table { width: 100%; border-collapse: collapse; color: #111; background: #fff; }
+.tax-print td, .tax-print th { border: 1px solid #888; padding: .5rem; text-align: left; background: #fff; color: #111; }
+.tax-print p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media print { .tax-print { padding: 0; } .tax-print .tax-screen { display: none; } .tax-print tr { break-inside: avoid; } }

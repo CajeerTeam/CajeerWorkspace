@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -164,9 +164,11 @@ function handlePost(PDO $db, ?array $user): never {
             $_SESSION['notice']='Банковская операция сохранена.';go('bank',$params);
         case 'accounting.init': case 'accounting.account': case 'accounting.period': case 'accounting.period_edit': case 'accounting.prepare': case 'accounting.approve': case 'accounting.post': case 'accounting.reverse': case 'accounting.close':
             accountingCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Бухгалтерская операция сохранена.'; go('accounting');
+        case 'tax.prepare': case 'tax.approve':
+            ukProfileCommand($db,$user,$act,$_POST);$_SESSION['notice']='VAT-профиль сохранён.';go('tax');
         case 'invoice.entity':
             invoiceEntitySave($db,$user,$_POST); $_SESSION['notice']='Юрлицо сохранено.'; go('invoices');
-        case 'invoice.create': case 'invoice.line': case 'invoice.remove': case 'invoice.terms': case 'invoice.issue': case 'invoice.void': case 'invoice.payment':
+        case 'invoice.create': case 'invoice.line': case 'invoice.remove': case 'invoice.terms': case 'invoice.issue': case 'invoice.void': case 'invoice.credit': case 'invoice.payment':
             $pid=$projectId();
             if($act==='invoice.create') $iid=invoiceCreate($db,$user,$pid,$key,$_POST);
             else { $iid=numberId($_POST['id']??0); if($act==='invoice.payment') invoicePayment($db,$user,$pid,$iid,$key,$_POST); else invoiceChange($db,$user,$pid,$iid,$key,$act,$_POST); }
@@ -361,6 +363,13 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'tax.print':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            renderUkPrint(ukPrintData($db,$user,numberId($_GET['project']??0),numberId($_GET['id']??0),($_GET['credit']??'')==='1'));return;
+        case 'tax': case 'tax.export':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            $data=ukReport($db,$user,calendarDate($_GET['from']??substr(ukToday(),0,7).'-01'),calendarDate($_GET['to']??ukToday()));
+            if($page==='tax.export'){sendUkCsv($data);return;}break;
         case 'economics':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             $data=econPage($db,$user,$projectId,econMonth($_GET['month']??gmdate('Y-m')),calendarDate($_GET['horizon']??gmdate('Y-m-d',time()+90*86400)));break;
@@ -522,3 +531,12 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     $title = match ($page) { 'project'=>$data['project']['title'], 'task'=>$data['task']['title'], 'document'=>$data['doc']['title'], default=>PAGE_TITLES[$page] };
     pageView($page,$title,$user,$data);
 }
+
+function sendUkCsv(array $data): void {
+    header('Content-Type: text/csv; charset=utf-8');header('Content-Disposition: attachment; filename="uk-vat-sales.csv"');
+    $out=fopen('php://output','wb');fwrite($out,"\xEF\xBB\xBF");
+    fputcsv($out,['document','type','date','original_invoice','original_tax_point','entity_id','project_id','supplier','supplier_address','vat_number','buyer','buyer_address','currency','net_minor','vat_minor','gross_minor','rule','credit_reason'],',','"','');
+    foreach($data['rows'] as $r){$s=json_decode($r['issuer_snapshot'],true,512,JSON_THROW_ON_ERROR);$b=json_decode($r['client_snapshot'],true,512,JSON_THROW_ON_ERROR);$p=json_decode($r['profile_snapshot'],true,512,JSON_THROW_ON_ERROR);fputcsv($out,[$r['doc_number'],$r['kind'],$r['date'],invoiceNumber($r),$r['tax_point'],$r['entity_id'],$r['project_id'],csvText($s['name']),csvText($s['address']),'GB'.$p['vat_number'],csvText($b['name']),csvText($r['buyer_address']),'GBP',$r['net'],$r['vat'],$r['gross'],$r['rule_version'],csvText($r['kind']==='credit'?$r['credit_reason']:'')],',','"','');}fclose($out);
+}
+
+function renderUkPrint(array $data): void {extract($data,EXTR_SKIP);require ROOT.'/views/tax_print.php';}

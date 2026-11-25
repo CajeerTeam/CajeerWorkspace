@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.5.3';
-const SCHEMA_VERSION = 18;
+const VERSION = '0.5.4';
+const SCHEMA_VERSION = 19;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -130,7 +130,7 @@ function calendarDate(mixed $value, bool $optional = false): ?string {
 
 function actionProject(PDO $db,string $name,int $id): array {
     [$project,$right]=match($name) {
-        'invoice.create','invoice.line','invoice.remove','invoice.terms','invoice.issue','invoice.void'=>[(int)entity($db,'SELECT project_id FROM invoices WHERE id=?',[$id])['project_id'],'payment.create'],
+        'invoice.create','invoice.line','invoice.remove','invoice.terms','invoice.issue','invoice.void','invoice.credit'=>[(int)entity($db,'SELECT project_id FROM invoices WHERE id=?',[$id])['project_id'],'payment.create'],
         'invoice.payment'=>[(int)entity($db,'SELECT project_id FROM payment_requests WHERE id=?',[$id])['project_id'],'payment.create'],
         'oss.settings','oss.milestone','oss.revoke','oss.link','oss.triage','oss.comment','oss.release','project.create','rate.save'=>[$id,'manage'],
         'availability.save'=>[$id,'work'],
