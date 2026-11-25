@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,12 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'infra.host': case 'infra.sync': case 'infra.environment': case 'infra.bind': case 'infra.detach': case 'infra.owner': case 'infra.deletehost':
+            $pid=$projectId(); orgOwner($db,$user); allowedProject($db,$user,$pid);
+            if($act==='infra.host') infraHostCreate($db,$user,$_POST);
+            elseif($act==='infra.sync') infraSync($db,$user,numberId($_POST['host_id']??null));
+            else infraChange($db,$user,$pid,$act,$_POST);
+            $_SESSION['notice']='Инфраструктура: изменения сохранены; проверьте состояние источников.'; go('infrastructure',['project'=>$pid]);
         case 'release.create': case 'release.verify': case 'release.confirm': case 'release.cancel':
             $pid=$projectId();
             if($act==='release.create') $id=releaseCreate($db,$user,$pid,$key,$_POST);
@@ -328,6 +334,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'infrastructure':
+            $data=infraPage($db,$user,numberId($_GET['project']??0)); break;
         case 'releases':
             $data=releasePage($db,$user,numberId($_GET['project']??0),optionalId($_GET['id']??'')); break;
         case 'github':

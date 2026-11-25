@@ -34,7 +34,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -53,11 +53,12 @@ const TRANSFER_TABLES = [
     'sprints'=>'id','sprint_tasks'=>'sprint_id,task_id','project_availability'=>'project_id,user_id,week_on','project_rates'=>'project_id','timesheets'=>'id','time_entries'=>'id',
     'counterparties'=>'id','counterparty_contacts'=>'id','client_orders'=>'id','client_offers'=>'id','client_stages'=>'id','client_stage_tasks'=>'stage_id,task_id','client_order_guests'=>'guest_id','client_deliveries'=>'id','client_stage_hours'=>'delivery_id,entry_id',
     'oss_projects'=>'project_id','oss_milestones'=>'project_id,milestone_id','oss_contributors'=>'id','oss_task_links'=>'task_id','oss_contributions'=>'id','oss_comments'=>'id','oss_releases'=>'id','oss_release_items'=>'release_id,contribution_id','oss_requests'=>'contributor_id,request_key',
-    'github_repositories'=>'id','github_task_links'=>'task_id','github_deliveries'=>'delivery_id','github_jobs'=>'id','project_releases'=>'id','project_release_tasks'=>'release_id,task_id'
+    'github_repositories'=>'id','github_task_links'=>'task_id','github_deliveries'=>'delivery_id','github_jobs'=>'id','project_releases'=>'id','project_release_tasks'=>'release_id,task_id',
+    'infra_hosts'=>'id','infra_environments'=>'id','infra_sites'=>'id','infra_observations'=>'host_id,source','infra_operation_owners'=>'host_id,operation'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
-    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_hash','week_on','request_key','delivery_id'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
+    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_hash','week_on','request_key','delivery_id','source','operation'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
     $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at":"*";
     $stmt=$db->query("SELECT $columns FROM $table ORDER BY $order");
     while ($row=$stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -78,7 +79,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.4.1.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.4.2.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

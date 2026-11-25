@@ -1,4 +1,4 @@
-# CajeerWorkspace · PHP 0.4.1
+# CajeerWorkspace · PHP 0.4.2
 
 Веб-приложение для команды, которая ведёт собственные, клиентские и open-source проекты. Владелец создаёт проект, тимлид назначает задачу, разработчик отмечает результат. Бухгалтер проводит поступление или расход, юрист загружает договор и его редакции. Каждая из этих операций сохраняется в SQLite или PostgreSQL.
 
@@ -19,7 +19,7 @@ php -S 127.0.0.1:8080 -t public
 
 Остановите HTTP/FPM, cron и CLI; отдельно сохраните старый код и конфигурацию. На новом коде выполните `php bin/workspace doctor`, `php bin/workspace migrations` и `php bin/workspace upgrade`. Перед изменением схемы создаётся проверенный снимок SQLite с SHA-256. Можно передать абсолютный путь новой копии; без аргумента копия сохраняется в каталоге данных. Все миграции и их журнал фиксируются атомарно. Повтор команды безопасен, веб-запросы не обновляют схему. Полная процедура, проверка и возврат: [UPGRADE.md](docs/UPGRADE.md).
 
-Полный дистрибутив собирается `python3 tools/release.py build` и проверяется `python3 tools/release.py verify dist/CajeerWorkspace-0.4.1.zip`. Сборка формирует внутренний SHA256SUMS и отдельную SHA-256 сумму ZIP. Python не требуется для запуска приложения.
+Полный дистрибутив собирается `python3 tools/release.py build` и проверяется `python3 tools/release.py verify dist/CajeerWorkspace-0.4.2.zip`. Сборка формирует внутренний SHA256SUMS и отдельную SHA-256 сумму ZIP. Python не требуется для запуска приложения.
 
 ## Первый проект
 
@@ -161,3 +161,7 @@ python3 tests/tenant_e2e.py --postgres
 ## Выпуски проекта (0.4.1)
 
 Приёмка GitHub Release по точному SHA тега, PR, CI, changelog и digest артефакта с подтверждением ответственного. См. [RELEASES.md](docs/RELEASES.md).
+
+## Инфраструктура проекта (0.4.2)
+
+Реестр dev/staging/prod, привязки сайтов aaPanel к хостам CajeerServers, отдельные наблюдения и матрица владельцев операций. См. [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md).

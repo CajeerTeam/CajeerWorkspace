@@ -53,6 +53,9 @@ jobs:
       - run: php tests/project_release_unit.php
       - run: python3 tests/project_release_schema.py
       - run: php tests/project_release_db.php
+      - run: php tests/infra_unit.php
+      - run: python3 tests/infra_schema.py
+      - run: php tests/infra_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -71,7 +74,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -116,3 +119,5 @@ jobs:
         run: php tests/github_db.php --postgres
       - if: matrix.suite == 'project_release'
         run: php tests/project_release_db.php --postgres
+      - if: matrix.suite == 'infra'
+        run: php tests/infra_db.php --postgres

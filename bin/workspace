@@ -55,6 +55,7 @@ CajeerWorkspace PHP 0.4.0
   php bin/workspace github:sync [PROJECT_ID]
   php bin/workspace github:work [LIMIT]
   php bin/workspace github:check
+  php bin/workspace infra:sync HOST_ID OWNER_ID
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -125,6 +126,11 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'infra:sync':
+            if($argc!==4) throw new Problem('Формат: infra:sync HOST_ID OWNER_ID');
+            $hid=numberId($argv[2]); $host=entity($db,'SELECT organization_id FROM infra_hosts WHERE id=?',[$hid]);
+            $actor=entity($db,"SELECT u.id,u.session_version,m.organization_id FROM users u JOIN organization_members m ON m.user_id=u.id WHERE m.organization_id=? AND m.role='owner' AND u.enabled=1 AND u.id=?",[$host['organization_id'],numberId($argv[3])]);
+            $obs=infraSync($db,$actor,$hid,null,true); $failed=false; foreach($obs as $source=>$o){echo $source,': ',($o['error']===''?'OK':$o['error']),PHP_EOL; if($o['error']!=='')$failed=true;} exit($failed?1:0);
         case 'github:bind':
             if ($argc!==5) throw new Problem('Формат: github:bind PROJECT_ID INSTALLATION_ID REPOSITORY_ID');
             echo 'Binding: ',ghBind($db,GitHubApp::configured(),ghId($argv[2]),ghId($argv[3]),ghId($argv[4])),PHP_EOL; break;

@@ -19,3 +19,4 @@ require_once __DIR__ . '/Clients.php';
 require_once __DIR__ . '/Oss.php';
 require_once __DIR__ . '/GitHub.php';
 require_once __DIR__ . '/Releases.php';
+require_once __DIR__ . '/Infrastructure.php';
