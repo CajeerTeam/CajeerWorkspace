@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.3.3
+CajeerWorkspace PHP 0.4.0
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -51,6 +51,10 @@ CajeerWorkspace PHP 0.3.3
   php bin/workspace backup /полный/путь/к/новой-копии.sqlite
   php bin/workspace postgres:import /абсолютный/путь/к/копии.sqlite
   php bin/workspace connection:assign KEY ORG_ID
+  php bin/workspace github:bind PROJECT_ID INSTALLATION_ID REPOSITORY_ID
+  php bin/workspace github:sync [PROJECT_ID]
+  php bin/workspace github:work [LIMIT]
+  php bin/workspace github:check
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -115,8 +119,24 @@ try {
         echo json_encode(['current'=>$version,'target'=>SCHEMA_VERSION,'pending'=>array_values(array_filter(array_keys($files),static fn($v)=>$v>$version)),'history'=>$rows],JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT),PHP_EOL;
         exit(0);
     }
+    if ($command==='github:check') {
+        if ($argc!==2) throw new Problem('Формат: github:check');
+        ghSecret(); GitHubApp::configured(); echo "GitHub App configuration loaded. Verify installation with github:bind.\n"; exit(0);
+    }
     $db = database();
     switch ($command) {
+        case 'github:bind':
+            if ($argc!==5) throw new Problem('Формат: github:bind PROJECT_ID INSTALLATION_ID REPOSITORY_ID');
+            echo 'Binding: ',ghBind($db,GitHubApp::configured(),ghId($argv[2]),ghId($argv[3]),ghId($argv[4])),PHP_EOL; break;
+        case 'github:sync':
+            if ($argc>3) throw new Problem('Формат: github:sync [PROJECT_ID]');
+            echo 'Repositories queued: ',ghManual($db,isset($argv[2])?ghId($argv[2]):null),PHP_EOL; break;
+        case 'github:work':
+            if ($argc>3) throw new Problem('Формат: github:work [LIMIT]');
+            $results=ghWork($db,GitHubApp::configured(),isset($argv[2])?ghId($argv[2]):10);
+            echo json_encode($results,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT),PHP_EOL;
+            exit(in_array('dead',array_column($results,'state'),true)?1:0);
+
         case 'auth:bind': case 'auth:unbind': case 'auth:emergency': case 'auth:mfa-reset':
             $needed=in_array($command,['auth:bind','auth:emergency'],true)?4:3;
             if ($argc!==$needed) throw new Problem('Проверьте формат команды auth (help).');

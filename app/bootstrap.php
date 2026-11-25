@@ -17,3 +17,4 @@ require_once __DIR__ . '/Oidc.php';
 require_once __DIR__ . '/Auth.php';
 require_once __DIR__ . '/Clients.php';
 require_once __DIR__ . '/Oss.php';
+require_once __DIR__ . '/GitHub.php';

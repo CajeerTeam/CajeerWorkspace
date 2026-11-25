@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,10 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'github.link': case 'github.unlink': case 'github.sync': case 'github.disable':
+            $pid=$projectId(); ghManage($db,$user,$pid,$act,$_POST); $_SESSION['notice']='Изменения GitHub сохранены.';
+            if (in_array($act,['github.link','github.unlink'],true)) go('task',['id'=>numberId($_POST['task_id']??0)]);
+            go('github',['project'=>$pid]);
         case 'oss.invite': case 'oss.reissue':
             $pid=$projectId(); $token=ossIssue($db,$user,$pid,$_POST['display_name']??'',workloadInt($_POST['hours']??null,1,168),$key,$act==='oss.reissue'?numberId($_POST['contributor_id']??0):null);
             // One-time display, bound to both actor and project.
@@ -317,6 +321,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'github':
+            $data=ghPage($db,$user,numberId($_GET['project']??0)); break;
         case 'oss':
             $pid=numberId($_GET['project']??0); $data=ossAdminPage($db,$user,$pid,optionalId($_GET['id']??''),numberId($_GET['n']??1),word($_GET['state']??'',20,'Статус',false));
             $token=$_SESSION['oss_token']??null; unset($_SESSION['oss_token']);
@@ -356,6 +362,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'task':
             $t=planningTask($db,$user,numberId($_GET['id']??0)); $pid=(int)$t['project_id'];
             $data=['task'=>$t,'projectRole'=>projectRole($db,$user,$pid),'dependencies'=>planningDependencies($db,$user,(int)$t['id']),'blocked'=>blockedTask($db,$pid,(int)$t['id'])];
+            $data['github']=ghTaskData($db,$user,$pid,(int)$t['id']);
             $data['ossConfig']=query($db,'SELECT upstream FROM oss_projects WHERE project_id=?',[$pid])->fetch()?:null;
             $data['ossLink']=query($db,'SELECT upstream_url FROM oss_task_links WHERE project_id=? AND task_id=?',[$pid,$t['id']])->fetchColumn()?:null;
             if (roleAllows($data['projectRole'],'manage')) {

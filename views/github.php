@@ -1,0 +1,14 @@
+<?php namespace Workspace; $pid=(int)$project['id']; $repo=$repository; ?>
+<p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($project['title']) ?></a></p>
+<?php if (!$repo): ?><section class="panel"><h2>GitHub App не подключён</h2><p>Установите приложение GitHub только на выбранные репозитории. Оператор подтверждает привязку repository ID к этому проекту (CLI github:bind). ID проекта: <?= $pid ?>.</p></section><?php else: ?>
+<section class="panel"><h2><?= h($repo['full_name']) ?></h2><p>Repository ID: <?= (int)$repo['repository_id'] ?> · Installation ID: <?= (int)$repo['installation_id'] ?> · <?= (int)$repo['active']?'Активно':'Отключено' ?></p>
+<p>Последняя проверка: <?= $repo['checked_at']?h(gmdate('Y-m-d H:i:s',(int)$repo['checked_at'])).' UTC':'—' ?></p>
+<?php if ($repo['last_error']!==''): ?><p class="planning-warning"><?= h($repo['last_error']) ?></p><?php endif ?>
+<?php if ((int)$repo['active']&&$githubSync): ?><form method="post" class="inline"><?php formFields('github.sync') ?><input type="hidden" name="project_id" value="<?= $pid ?>"><button class="primary">Поставить ручную сверку в очередь (MFA)</button></form><?php endif ?>
+<?php if ((int)$repo['active']&&$githubOwner): ?><form method="post"><?php formFields('github.disable') ?><input type="hidden" name="project_id" value="<?= $pid ?>"><button class="secondary">Отключить доступ и удалить снимки (MFA)</button></form><?php endif ?>
+<p>Синхронизация выполняется CLI worker; состояние GitHub не меняет статус задачи автоматически.</p></section>
+<section class="panel"><h2>Связанные задачи</h2><?php if (!$links): ?><p>Связей нет. Откройте карточку задачи для привязки issue или PR.</p><?php endif ?>
+<?php foreach ($links as $link): ?><article class="panel inset"><h3><a href="<?= h(url('task',['id'=>$link['task_id']])) ?>">#<?= (int)$link['task_id'] ?> <?= h($link['task_title']) ?></a></h3><?php if ((int)$repo['active']): require ROOT.'/views/github_snapshot.php'; else: ?><p>Доступ отозван.</p><?php endif ?></article><?php endforeach ?></section>
+<section class="panel"><h2>Очередь событий и сверок</h2><p><?php foreach (['pending','running','done','dead','cancelled'] as $state): ?><?= h($state) ?>: <?= (int)($counts[$state]??0) ?> · <?php endforeach ?></p>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Задача</th><th>Состояние</th><th>Попытки</th><th>Следующая попытка</th><th>Результат</th></tr></thead><tbody><?php foreach ($jobs as $job): ?><tr><td><?= (int)$job['id'] ?></td><td><?= $job['task_id']===null?'Репозиторий':'#'.(int)$job['task_id'] ?></td><td><?= h($job['state']) ?></td><td><?= (int)$job['attempts'] ?></td><td><?= $job['state']==='pending'?h(gmdate('Y-m-d H:i:s',(int)$job['available_at'])).' UTC':'—' ?></td><td><?= h($job['last_error']) ?></td></tr><?php endforeach ?></tbody></table></div><p>Последние 50 заданий.</p></section>
+<?php endif ?>
