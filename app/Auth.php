@@ -47,7 +47,7 @@ function authThrottle(PDO $db,string $bucket,int $limit=8): void {
 }
 function mfaFresh(): bool { return (int)($_SESSION['mfa_at']??0)>=time()-300 && ($_SESSION['mfa_at']??0)<=time(); }
 function sensitiveAction(string $act): bool {
-    return in_array($act,['rate.save','time.approve','time.reject'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
+    return in_array($act,['rate.save','time.approve','time.reject'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice','accounting'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
 }
 function requireMfa(string $act): void {
     if (sensitiveAction($act)&&!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность», затем повторите действие.',403);

@@ -62,6 +62,9 @@ jobs:
       - run: php tests/invoice_unit.php
       - run: python3 tests/invoice_schema.py
       - run: php tests/invoice_db.php
+      - run: php tests/accounting_unit.php
+      - run: python3 tests/accounting_schema.py
+      - run: php tests/accounting_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -80,7 +83,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -132,3 +135,6 @@ jobs:
 
       - if: matrix.suite == 'invoice'
         run: php tests/invoice_db.php --postgres
+
+      - if: matrix.suite == 'accounting'
+        run: php tests/accounting_db.php --postgres

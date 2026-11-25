@@ -16,7 +16,9 @@ function checkReversal(PDO $db,int $id): array {
 }
 function postPayment(PDO $db,array $p,int $actor): int {
     if ($p['reversal_of']!==null) checkReversal($db,(int)$p['reversal_of']);
-    return insertId($db,'INSERT INTO cash_entries(project_id,direction,amount_minor,currency,booked_on,memo,reversal_of,actor_id) VALUES(?,?,?,?,?,?,?,?)',[$p['project_id'],$p['direction'],$p['amount_minor'],$p['currency'],$p['booked_on'],$p['memo'],$p['reversal_of'],$actor]);
+    accountingCheckCashDate($db,(int)$p['project_id'],$p['booked_on']);
+    $id=insertId($db,'INSERT INTO cash_entries(project_id,direction,amount_minor,currency,booked_on,memo,reversal_of,actor_id) VALUES(?,?,?,?,?,?,?,?)',[$p['project_id'],$p['direction'],$p['amount_minor'],$p['currency'],$p['booked_on'],$p['memo'],$p['reversal_of'],$actor]);
+    accountingCashEntry($db,$id); return $id;
 }
 function submitPayment(PDO $db,array $user,string $key,int $project,array $data,?int $reversal=null): array {
     $u=organizationUser($db,$user); requireProjectRight($db,$u,$project,'payment.create');
@@ -30,6 +32,7 @@ function submitPayment(PDO $db,array $user,string $key,int $project,array $data,
             $data=[$entry['direction'],-(int)$entry['amount_minor'],$entry['currency'],gmdate('Y-m-d'),'Сторно · '.$entry['memo']];
         }
         [$direction,$amount,$currency,$date,$memo]=$data;
+        accountingCheckCashDate($db,$project,$date);
         // A creator-only role cannot bypass approval even when direct posting is enabled.
         $dual=dualControl($db,$project) || !roleAllows(projectRole($db,$u,$project),'payment.approve');
         $p=['project_id'=>$project,'direction'=>$direction,'amount_minor'=>$amount,'currency'=>$currency,'booked_on'=>$date,'memo'=>$memo,'reversal_of'=>$reversal];

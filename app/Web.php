@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance'];
 
 function h(mixed $value): string {
@@ -149,6 +149,8 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'accounting.init': case 'accounting.account': case 'accounting.period': case 'accounting.period_edit': case 'accounting.prepare': case 'accounting.approve': case 'accounting.post': case 'accounting.reverse': case 'accounting.close':
+            accountingCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Бухгалтерская операция сохранена.'; go('accounting');
         case 'invoice.entity':
             invoiceEntitySave($db,$user,$_POST); $_SESSION['notice']='Юрлицо сохранено.'; go('invoices');
         case 'invoice.create': case 'invoice.line': case 'invoice.remove': case 'invoice.terms': case 'invoice.issue': case 'invoice.void': case 'invoice.payment':
@@ -346,6 +348,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'accounting':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
+            $data=accountingPage($db,$user,optionalId($_GET['period']??''),optionalId($_GET['before']??'')); break;
         case 'invoices':
             $data=invoicePage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['before']??'')); break;
         case 'deployments':

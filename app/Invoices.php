@@ -105,6 +105,7 @@ function invoicePayment(PDO $db,array $user,int $project,int $id,string $key,arr
         if(query($db,'SELECT 1 FROM invoice_movements WHERE entity_id=? AND kind=? AND reference=?',[$i['entity_id'],$kind,$reference])->fetchColumn())throw new Problem('Такой идентификатор движения уже зарегистрирован.',409);
         $dual=dualControl($db,$project)||!roleAllows(projectRole($db,$u,$project),'payment.approve');$direction=$kind==='receipt'?'income':'expense';$memo=($kind==='receipt'?'Оплата':'Возврат').' счёта '.invoiceNumber($i);
         $p=['project_id'=>$project,'direction'=>$direction,'amount_minor'=>$amount,'currency'=>$i['currency'],'booked_on'=>$date,'memo'=>$memo,'reversal_of'=>null];
+        accountingCheckCashDate($db,$project,$date);
         $cash=$dual?null:postPayment($db,$p,(int)$u['id']);
         $request=insertId($db,'INSERT INTO payment_requests(project_id,direction,amount_minor,currency,booked_on,memo,created_by,dual_control,status,decided_by,decided_at,cash_entry_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[$project,$direction,$amount,$i['currency'],$date,$memo,$u['id'],(int)$dual,$dual?'pending':'posted',$dual?null:$u['id'],$dual?null:gmdate('Y-m-d H:i:s'),$cash]);
         query($db,'INSERT INTO invoice_movements(invoice_id,project_id,entity_id,request_id,kind,reference,original_id) VALUES(?,?,?,?,?,?,?)',[$id,$project,$i['entity_id'],$request,$kind,$reference,$original]);return $request;
