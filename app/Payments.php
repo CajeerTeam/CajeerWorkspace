@@ -10,6 +10,7 @@ function paymentData(array $form): array {
 }
 function checkReversal(PDO $db,int $id): array {
     $entry=entity($db,'SELECT * FROM cash_entries WHERE id=?',[$id]);
+    if (query($db,'SELECT 1 FROM invoice_movements m JOIN payment_requests r ON r.id=m.request_id WHERE r.cash_entry_id=?',[$id])->fetchColumn()) throw new Problem('Движение счёта корректируется через возврат, не через сторно кассы.',409);
     if ($entry['reversal_of']!==null || query($db,'SELECT 1 FROM cash_entries WHERE reversal_of=?',[$id])->fetchColumn()) throw new Problem('Для этой записи сторно уже проведено.',409);
     return $entry;
 }
@@ -55,6 +56,7 @@ function decidePayment(PDO $db,array $user,string $key,int $id,string $decision)
             // Revocation of the original creator's authority invalidates pending execution.
             requireProjectRight($db,['id'=>(int)$p['created_by'],'organization_id'=>$u['organization_id']],$project,'payment.create');
         }
+        if ($decision==='approve') invoiceBeforeApproval($db,$p);
         $cash=$decision==='approve'?postPayment($db,$p,(int)$u['id']):null;
         $status=match($decision){'approve'=>'posted','reject'=>'rejected','cancel'=>'cancelled'};
         if (query($db,"UPDATE payment_requests SET status=?,decided_by=?,decided_at=?,cash_entry_id=? WHERE id=? AND status='pending'",[$status,$u['id'],gmdate('Y-m-d H:i:s'),$cash,$id])->rowCount()!==1) throw new Problem('Заявка уже обработана.',409);
@@ -67,7 +69,7 @@ function paymentQueue(PDO $db,array $user,?int $project,?int $before=null): arra
     $where=$scope;
     if ($project!==null) { $where.=' AND p.id=?'; $args[]=$project; }
     if ($before!==null) { $where.=' AND r.id<?'; $args[]=$before; }
-    return query($db,"SELECT r.*,p.title project_title,u.name creator,v.name decider FROM payment_requests r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.created_by LEFT JOIN users v ON v.id=r.decided_by WHERE $where ORDER BY r.id DESC LIMIT 51",$args)->fetchAll();
+    return query($db,"SELECT r.*,p.title project_title,u.name creator,v.name decider,m.invoice_id FROM payment_requests r LEFT JOIN invoice_movements m ON m.request_id=r.id JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=r.created_by LEFT JOIN users v ON v.id=r.decided_by WHERE $where ORDER BY r.id DESC LIMIT 51",$args)->fetchAll();
 }
 
 // Must run inside the same transaction as the access change; no stale request may be resurrected by a later grant.

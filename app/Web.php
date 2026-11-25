@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,13 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'invoice.entity':
+            invoiceEntitySave($db,$user,$_POST); $_SESSION['notice']='Юрлицо сохранено.'; go('invoices');
+        case 'invoice.create': case 'invoice.line': case 'invoice.remove': case 'invoice.terms': case 'invoice.issue': case 'invoice.void': case 'invoice.payment':
+            $pid=$projectId();
+            if($act==='invoice.create') $iid=invoiceCreate($db,$user,$pid,$key,$_POST);
+            else { $iid=numberId($_POST['id']??0); if($act==='invoice.payment') invoicePayment($db,$user,$pid,$iid,$key,$_POST); else invoiceChange($db,$user,$pid,$iid,$key,$act,$_POST); }
+            $_SESSION['notice']='Изменения счёта сохранены.'; go('invoices',['project'=>$pid,'id'=>$iid]);
         case 'deploy.create': case 'deploy.cancel':
             $pid=$projectId();
             if($act==='deploy.create') deploymentCreate($db,$user,$pid,$key,$_POST);
@@ -339,6 +346,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'invoices':
+            $data=invoicePage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['before']??'')); break;
         case 'deployments':
             $data=deploymentPage($db,$user,numberId($_GET['project']??0)); break;
         case 'infrastructure':

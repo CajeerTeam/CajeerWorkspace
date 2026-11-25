@@ -77,7 +77,7 @@ function cashFilter(PDO $db,array $user,array $input): array {
 
 function ledger(PDO $db, array $user,array $input, ?int $offset = null): \PDOStatement {
     [$where,$args] = cashFilter($db,$user,$input);
-    $sql = 'SELECT e.*,p.title project_title,u.name actor_name,r.id reversed_by FROM cash_entries e JOIN projects p ON p.id=e.project_id
+    $sql = 'SELECT e.*,p.title project_title,u.name actor_name,r.id reversed_by,im.invoice_id FROM cash_entries e LEFT JOIN payment_requests ip ON ip.cash_entry_id=e.id LEFT JOIN invoice_movements im ON im.request_id=ip.id JOIN projects p ON p.id=e.project_id
         JOIN users u ON u.id=e.actor_id LEFT JOIN cash_entries r ON r.reversal_of=e.id' . $where . ' ORDER BY e.booked_on DESC,e.id DESC';
     if ($offset !== null) $sql .= ' LIMIT 51 OFFSET '.max(0,$offset);
     return query($db,$sql,$args);
