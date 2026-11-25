@@ -55,7 +55,7 @@ $root=sys_get_temp_dir().'/cws-migration-'.bin2hex(random_bytes(8));
 mkdir($root,0700); $checks=0;
 try {
     expectMigration(runtimeReport()['ok'],'Runtime requirements');
-    foreach ([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19] as $version) {
+    foreach ([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20] as $version) {
         $dir=$root.'/v'.$version; $expected=seededLegacy($dir,$version);
         putenv('WORKSPACE_DATA='.$dir);
         failsMigration(fn()=>database(),'Web refuses old schema');

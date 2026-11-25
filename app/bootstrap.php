@@ -27,3 +27,4 @@ require_once __DIR__ . '/Releases.php';
 require_once __DIR__ . '/Infrastructure.php';
 require_once __DIR__ . '/Deployments.php';
 require_once __DIR__ . '/Contracts.php';
+require_once __DIR__ . '/Preparation.php';

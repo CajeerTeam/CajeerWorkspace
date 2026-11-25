@@ -34,7 +34,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -60,7 +60,8 @@ const TRANSFER_TABLES = [
     'bank_accounts'=>'id','bank_rates'=>'id','bank_statements'=>'id','bank_rows'=>'id','bank_allocations'=>'id','bank_reconciliations'=>'id','bank_match_history'=>'id',
     'economics_settings'=>'project_id','economics_budgets'=>'id','economics_labor_rates'=>'id','economics_cash_classes'=>'cash_id','economics_plans'=>'id','economics_plan_cash'=>'plan_id,cash_id',
     'uk_vat_profiles'=>'entity_id','uk_vat_documents'=>'invoice_id',
-    'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id'
+    'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id',
+    'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
@@ -85,7 +86,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.6.0.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.6.1.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

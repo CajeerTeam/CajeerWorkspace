@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,8 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'prep.template': case 'prep.create': case 'prep.revise': case 'prep.assign': case 'prep.submit': case 'prep.legal': case 'prep.approve': case 'prep.return': case 'prep.cancel':
+            $pid=$projectId();$id=prepCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Операция сохранена.';go('preparation',$act==='prep.template'?['project'=>$pid]:['project'=>$pid,'id'=>$id]);
         case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
             $pid=$projectId();$cid=contractCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Карточка договора сохранена.';go('contracts',['project'=>$pid,'id'=>$cid]);
         case 'econ.settings': case 'econ.budget': case 'econ.rate': case 'econ.class': case 'econ.plan': case 'econ.allocate': case 'econ.cancel': case 'econ.reschedule': case 'econ.unallocate':
@@ -365,6 +367,20 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'preparation':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            $data=prepPage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['compare']??''),optionalId($_GET['before']??''));break;
+        case 'approved_acts':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            $data=prepActs($db,$user,$projectId,optionalId($_GET['before']??''));break;
+        case 'prep.print':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            $c=prepGet($db,$user,numberId($projectId),numberId($_GET['id']??0));$r=entity($db,'SELECT * FROM preparation_revisions WHERE preparation_id=? AND revision=?',[$c['id'],numberId($_GET['revision']??0)]);prepVerify($db,$r,false);
+            require ROOT.'/views/preparation_print.php';return;
+        case 'prep.act':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
+            $r=prepApprovedAct($db,$user,numberId($projectId),numberId($_GET['id']??0));$expr=isPostgres($db)?"encode(bytes,'hex')":'hex(bytes)';$bytes=hex2bin(entity($db,"SELECT $expr payload FROM document_versions WHERE document_id=? AND revision=?",[$r['document_id'],$r['document_revision']])['payload']);
+            if(!hash_equals($r['document_hash'],hash('sha256',$bytes)))throw new Problem('Хеш акта изменился.',409);header('Content-Type: application/pdf');header('Content-Disposition: attachment; filename="approved-act-'.$r['preparation_id'].'-v'.$r['revision'].'.pdf"');echo $bytes;return;
         case 'contracts':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             $data=contractPage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['before']??''));break;

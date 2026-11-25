@@ -75,6 +75,9 @@ jobs:
       - run: php tests/tax_db.php
       - run: python3 tests/contracts_schema.py
       - run: php tests/contracts_db.php
+      - run: php tests/preparation_unit.php
+      - run: python3 tests/preparation_schema.py
+      - run: php tests/preparation_db.php
   package:
     needs: [verify, postgres]
     runs-on: ubuntu-latest
@@ -93,7 +96,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -158,3 +161,5 @@ jobs:
 
       - if: matrix.suite == 'contracts'
         run: php tests/contracts_db.php --postgres
+      - if: matrix.suite == 'preparation'
+        run: php tests/preparation_db.php --postgres
