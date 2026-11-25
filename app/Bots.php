@@ -1,0 +1,105 @@
+<?php
+declare(strict_types=1);
+namespace Workspace;
+use PDO;
+
+function botsId(mixed $s): string {if(!is_string($s)||!preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D',$s))throw new Problem('Некорректный идентификатор Bots.');return $s;}
+function botsText(mixed $s): string {
+ if(!is_string($s))throw new Problem('Введите сообщение.');$s=trim(str_replace("\r\n","\n",$s));
+ if($s===''||strlen($s)>8000||preg_match_all('/./us',$s)===false||preg_match_all('/./us',$s)>2000||preg_match('/[\x00-\x08\x0b-\x1f\x7f]/',$s))throw new Problem('Сообщение: 1–2000 символов, без управляющих знаков.');return $s;
+}
+function botsConfig(int $org,int $project): array {
+ $file=getenv('WORKSPACE_BOTS_TARGETS');if(!$file||!is_file($file)||!is_readable($file)||filesize($file)>262144)throw new Problem('Настройте WORKSPACE_BOTS_TARGETS.',503);
+ try{$map=json_decode((string)file_get_contents($file),true,16,JSON_THROW_ON_ERROR);}catch(\Throwable){throw new Problem('Некорректная конфигурация Bots.',503);}
+ $r=$map[$org.':'.$project]??null;if(!is_array($r))throw new Problem('Цель Bots не разрешена оператором.',409);
+ $origin=logsOrigin($r['origin']??null);$community=botsId($r['community_id']??null);$account=botsId($r['account_id']??null);$credential=botsId($r['credential_id']??null);$provider=$r['provider']??null;$channel=$r['channel_id']??null;
+ if(!is_string($channel)||!(($provider==='telegram'&&preg_match('/\A-100[0-9]{5,16}\z/D',$channel))||($provider==='vk'&&preg_match('/\A[1-9][0-9]{0,15}\z/D',$channel))))throw new Problem('Bots: требуется разрешённый канал Telegram или VK.',409);
+ $env=logsEnvName($r['token_env']??null);return ['origin'=>$origin,'community_id'=>$community,'account_id'=>$account,'provider'=>$provider,'channel_id'=>$channel,'credential_id'=>$credential,'token_env'=>$env,'identity_hash'=>hash('sha256',json_encode([$origin,$community,$account,$provider,$channel,$credential],JSON_THROW_ON_ERROR))];
+}
+function botsHttp(array $c,string $method,string $path,?array $body=null): array {
+ if(!extension_loaded('curl'))throw new Problem('Требуется cURL.',503);$token=logsToken($c['token_env']);$headers=['Accept: application/json','X-API-Key: '.$token,'Cache-Control: no-store'];$raw='';$ch=curl_init($c['origin'].$path);
+ $options=[CURLOPT_CUSTOMREQUEST=>$method,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_CONNECTTIMEOUT_MS=>2000,CURLOPT_TIMEOUT_MS=>8000,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_PROXY=>'',CURLOPT_USERAGENT=>'CajeerWorkspace/'.VERSION,CURLOPT_WRITEFUNCTION=>static function($ch,string $part)use(&$raw):int{if(strlen($raw)+strlen($part)>65536)return 0;$raw.=$part;return strlen($part);}];
+ if($body!==null){$headers[]='Content-Type: application/json';$options[CURLOPT_POSTFIELDS]=json_encode($body,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);}$options[CURLOPT_HTTPHEADER]=$headers;curl_setopt_array($ch,$options);
+ try{$ok=curl_exec($ch);$status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);$mime=(string)curl_getinfo($ch,CURLINFO_CONTENT_TYPE);}finally{curl_close($ch);}
+ if($ok===false)throw new Problem('Bots: сеть или размер ответа.',503);if(!in_array($status,[200,201],true))throw new Problem('Bots: HTTP '.$status,$status>=400&&$status<=599?$status:503);
+ if(!preg_match('~^application/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)~i',$mime))throw new Problem('Bots: несовместимый ответ.',503);
+ try{$r=json_decode($raw,true,16,JSON_THROW_ON_ERROR);}catch(\Throwable){throw new Problem('Bots: несовместимый ответ.',503);}if(!is_array($r)||array_is_list($r))throw new Problem('Bots: несовместимый ответ.',503);return $r;
+}
+function botsPath(array $c): string {return '/api/communities/'.rawurlencode($c['community_id']).'/bot-runtime';}
+function botsTarget(array $c,?callable $transport=null): string {
+ $read=$transport??__NAMESPACE__.'\\botsHttp';$r=$read($c,'GET',botsPath($c).'/workspace-target',null);
+ foreach(['communityId'=>'community_id','accountId'=>'account_id','provider'=>'provider','channelId'=>'channel_id','credentialId'=>'credential_id'] as $remote=>$local)if(($r[$remote]??null)!==$c[$local])throw new Problem('Bots: удалённая цель не совпадает.',409);
+ $v=$r['revision']??null;if(($r['api']??null)!=='workspace-delivery-v1'||!is_string($v)||!preg_match('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z/D',$v))throw new Problem('Bots: требуется совместимый адаптер.',409);return $v;
+}
+function botsBinding(PDO $db,int $project): ?array {return query($db,'SELECT * FROM bots_bindings WHERE project_id=?',[$project])->fetch()?:null;}
+function botsBound(array $b): array {$c=botsConfig((int)$b['organization_id'],(int)$b['project_id']);if(!hash_equals($b['identity_hash'],$c['identity_hash']))throw new Problem('Цель Bots изменилась.',409);return $c;}
+function botsActor(PDO $db,array $u,int $project): array {$u=organizationUser($db,$u);requireProjectRight($db,$u,$project,'connections');requireProjectRight($db,$u,$project,'manage');return $u;}
+function botsConfigure(PDO $db,array $u,int $project,bool $active,?callable $transport=null): void {
+ $u=orgOwner($db,$u);allowedProject($db,$u,$project);$c=null;if($active){$c=botsConfig((int)$u['organization_id'],$project);botsTarget($c,$transport);}
+ atomic($db,function()use($db,$u,$project,$active,$c){$u=orgOwner($db,$u);allowedProject($db,$u,$project);$b=botsBinding($db,$project);if(!$active&&!$b)return;
+  if($b){if($active&&!hash_equals($b['identity_hash'],$c['identity_hash']))throw new Problem('Цель существующей привязки неизменяема.',409);query($db,'UPDATE bots_bindings SET active=?,updated_at=? WHERE project_id=?',[(int)$active,time(),$project]);}
+  else{if(query($db,'SELECT 1 FROM bots_bindings WHERE origin=? AND (credential_id=? OR (account_id=? AND channel_id=?))',[$c['origin'],$c['credential_id'],$c['account_id'],$c['channel_id']])->fetchColumn())throw new Problem('Цель или ключ уже привязаны.',409);query($db,'INSERT INTO bots_bindings(project_id,organization_id,origin,community_id,account_id,provider,channel_id,credential_id,identity_hash,active,updated_at) VALUES(?,?,?,?,?,?,?,?,?,1,?)',[$project,$u['organization_id'],$c['origin'],$c['community_id'],$c['account_id'],$c['provider'],$c['channel_id'],$c['credential_id'],$c['identity_hash'],time()]);}
+  auditEvent($db,$u,$project,'bots.binding',$project,$active?'enabled':'disabled');
+ });
+}
+function botsRelease(PDO $db,int $project,?int $release): ?array {
+ if($release===null)return null;$r=releaseRow($db,$project,$release);if($r['state']!=='confirmed'||!is_string($r['evidence'])||!is_string($r['evidence_hash'])||!hash_equals($r['evidence_hash'],hash('sha256',$r['evidence'])))throw new Problem('Требуется подтверждённый выпуск с целостными доказательствами.',409);return $r;
+}
+function botsRow(PDO $db,int $project,int $id): array {return entity($db,'SELECT * FROM bots_messages WHERE project_id=? AND id=?',[$project,$id]);}
+function botsEvent(PDO $db,array $r,int $actor,string $state,string $detail=''): void {
+ query($db,'INSERT INTO bots_events(project_id,message_id,actor_id,state,detail,created_at) VALUES(?,?,?,?,?,?)',[$r['project_id'],$r['id'],$actor,$state,$detail,time()]);
+ auditEvent($db,['id'=>$actor,'organization_id'=>$r['organization_id']],(int)$r['project_id'],'bots.'.$state,(int)$r['id'],$detail);
+}
+function botsPreviewHash(array $r): string {return hash('sha256',json_encode([$r['remote_id'],$r['identity_hash'],$r['target_revision'],$r['release_id']===null?null:(int)$r['release_id'],$r['release_hash'],$r['message_hash']],JSON_THROW_ON_ERROR));}
+function botsAssertSnapshot(PDO $db,array $r,array $b): void {
+ if(!hash_equals($r['identity_hash'],$b['identity_hash'])||!hash_equals($r['message_hash'],hash('sha256',$r['message']))||!hash_equals($r['preview_hash'],botsPreviewHash($r)))throw new Problem('Снимок сообщения изменён.',409);
+ $rel=botsRelease($db,(int)$r['project_id'],$r['release_id']===null?null:(int)$r['release_id']);if($rel&&!hash_equals($r['release_hash'],$rel['evidence_hash']))throw new Problem('Выпуск изменён.',409);
+}
+function botsDraft(PDO $db,array $u,int $project,string $key,?int $release,mixed $message,?callable $transport=null): int {
+ $u=botsActor($db,$u,$project);if(!preg_match('/\A[a-f0-9]{32}\z/D',$key))throw new Problem('Обновите форму.');$text=botsText($message);$b=botsBinding($db,$project);if(!$b||!(int)$b['active'])throw new Problem('Bots отключён.',409);$c=botsBound($b);$rel=botsRelease($db,$project,$release);
+ $prior=function()use($db,$u,$project,$key,$release,$text):?int{$r=query($db,'SELECT * FROM bots_messages WHERE project_id=? AND request_key=?',[$project,$key])->fetch();if(!$r)return null;if((int)$r['creator_id']!==(int)$u['id']||($r['release_id']===null?null:(int)$r['release_id'])!==$release||$r['message']!==$text)throw new Problem('Ключ уже использован.',409);return (int)$r['id'];};if(($id=$prior())!==null)return $id;
+ $revision=botsTarget($c,$transport);return atomic($db,function()use($db,$u,$project,$key,$release,$text,$b,$revision,$prior,$rel){$u=botsActor($db,$u,$project);if(($id=$prior())!==null)return $id;$fresh=botsBinding($db,$project);if(!$fresh||!(int)$fresh['active']||$fresh['identity_hash']!==$b['identity_hash'])throw new Problem('Привязка изменилась.',409);$rr=botsRelease($db,$project,$release);if(($rr['evidence_hash']??null)!==($rel['evidence_hash']??null))throw new Problem('Выпуск изменён.',409);
+  if($release!==null&&query($db,"SELECT 1 FROM bots_messages WHERE project_id=? AND release_id=? AND state!='cancelled'",[$project,$release])->fetchColumn())throw new Problem('Для выпуска уже существует сообщение.',409);
+  $r=['remote_id'=>'workspace-'.bin2hex(random_bytes(16)),'identity_hash'=>$b['identity_hash'],'target_revision'=>$revision,'release_id'=>$release,'release_hash'=>$rel['evidence_hash']??null,'message_hash'=>hash('sha256',$text)];$now=time();$id=insertId($db,'INSERT INTO bots_messages(project_id,organization_id,release_id,release_hash,request_key,remote_id,identity_hash,target_revision,message,message_hash,preview_hash,creator_id,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[$project,$u['organization_id'],$release,$r['release_hash'],$key,$r['remote_id'],$r['identity_hash'],$revision,$text,$r['message_hash'],botsPreviewHash($r),$u['id'],$now,$now,$now]);botsEvent($db,botsRow($db,$project,$id),(int)$u['id'],'draft');return $id;
+ });
+}
+/** All mutations except the HTTP handoff are serialized with the application write lock. */
+function botsCommand(PDO $db,array $u,int $project,int $id,string $op,string $preview): void {
+ atomic($db,function()use($db,$u,$project,$id,$op,$preview){$u=botsActor($db,$u,$project);$r=botsRow($db,$project,$id);if(!hash_equals($r['preview_hash'],$preview))throw new Problem('Предпросмотр изменён.',409);$b=botsBinding($db,$project);$state=$r['state'];$command=$r['command'];$next='queued';$detail=$op;
+  if($op==='confirm') {if($state==='queued'&&$command==='create')return;if($state!=='draft')throw new Problem('Сообщение уже подтверждено.',409);$command='create';}
+  elseif($op==='retry'){if($state==='queued'&&$command==='retry')return;if($state==='failed'&&$command==='create')$command='create';elseif($state==='retryable'&&(int)$r['remote_attempts']<8)$command='retry';else throw new Problem('Повтор возможен только после подтверждённого отказа до отправки.',409);}
+  elseif($op==='cancel'){if($state==='cancelled')return;if(in_array($state,['draft','failed'],true)||($state==='queued'&&$command==='create'))$next='cancelled';elseif(in_array($state,['pending','retryable'],true)||($state==='queued'&&$command==='retry'))$command='cancel';elseif($state==='queued'&&$command==='cancel')return;else throw new Problem('Сообщение уже передано на отправку или результат неизвестен.',409);}
+  elseif($op==='check'){if($state==='queued'&&$command==='check')return;if(!in_array($state,['pending','sending','retryable','uncertain'],true))throw new Problem('Сверка недоступна.',409);$command='check';}
+  elseif($op==='close'){if($state==='closed')return;if($state!=='uncertain')throw new Problem('Закрывается только неизвестный результат.',409);$next='closed';}
+  else throw new Problem('Неизвестная операция.');
+  if(in_array($command,['create','retry'],true)&&$next==='queued'){if(!$b||!(int)$b['active'])throw new Problem('Bots отключён.',409);botsAssertSnapshot($db,$r,$b);}
+  $session=(int)entity($db,'SELECT session_version FROM users WHERE id=?',[$u['id']])['session_version'];query($db,'UPDATE bots_messages SET state=?,command=?,actor_id=?,actor_session=?,available_at=?,updated_at=?,error_code=? WHERE id=?',[$next,$command,$u['id'],$session,time(),time(),'',$id]);botsEvent($db,$r,(int)$u['id'],$next,$detail);
+ });
+}
+function botsReceipt(array $c,array $r,array $remote): array {
+ foreach(['id'=>$r['remote_id'],'communityId'=>$c['community_id'],'accountId'=>$c['account_id'],'provider'=>$c['provider'],'channelId'=>$c['channel_id'],'sha256'=>$r['message_hash'],'revision'=>$r['target_revision']] as $k=>$v)if(($remote[$k]??null)!==$v)throw new Problem('Bots: квитанция не соответствует сообщению.',409);
+ $state=$remote['status']??null;$attempts=$remote['attempts']??null;$pid=$remote['providerMessageId']??null;
+ if(!in_array($state,['pending','sending','retryable','uncertain','sent','cancelled'],true)||!is_int($attempts)||$attempts<0||$attempts>8||$attempts<(int)$r['remote_attempts']||($state==='sent'&&(!is_string($pid)||!preg_match('/\A[0-9]{1,24}\z/D',$pid)))||($state!=='sent'&&$pid!==null))throw new Problem('Bots: некорректная квитанция.',503);return [$state,$attempts,$pid];
+}
+function botsTick(PDO $db,int $limit=10,?callable $transport=null): array {
+ if($limit<1||$limit>100)throw new Problem('Лимит 1–100.');$send=$transport??__NAMESPACE__.'\\botsHttp';$report=['processed'=>0,'sent'=>0,'uncertain'=>0,'failed'=>0];
+ // Never re-send a crashed handoff. A later GET may prove the exact remote record.
+ atomic($db,function()use($db){foreach(query($db,"SELECT * FROM bots_messages WHERE state='processing' AND lease_until<=?",[time()])->fetchAll() as $r){query($db,"UPDATE bots_messages SET state='uncertain',claim=NULL,lease_until=NULL,error_code='lease_expired',updated_at=? WHERE id=?",[time(),$r['id']]);botsEvent($db,$r,(int)$r['actor_id'],'uncertain','lease_expired');}});
+ for($i=0;$i<$limit;$i++){
+  $r=atomic($db,function()use($db){$now=time();$r=query($db,"SELECT * FROM bots_messages WHERE state IN ('queued','pending','sending') AND available_at<=? ORDER BY available_at,id LIMIT 1",[$now])->fetch();if(!$r)return null;$cmd=$r['state']==='queued'?$r['command']:'check';$claim=bin2hex(random_bytes(16));query($db,"UPDATE bots_messages SET state='processing',command=?,claim=?,lease_until=?,updated_at=? WHERE id=?",[$cmd,$claim,$now+60,$now,$r['id']]);return array_replace($r,['command'=>$cmd,'claim'=>$claim]);});if(!$r)break;
+  $state='uncertain';$code='unknown';$attempts=(int)$r['remote_attempts'];$pid=null;$mutating=false;
+  try{$b=botsBinding($db,(int)$r['project_id']);if(!$b)throw new Problem('Привязка отсутствует.',409);$c=botsBound($b);$cmd=$r['command'];$path=botsPath($c).'/workspace-messages/'.$r['remote_id'];
+   if($cmd==='create'||$cmd==='retry'){
+    $check=function()use($db,$r,$b){$p=(int)$r['project_id'];$u=['id'=>(int)$r['actor_id'],'organization_id'=>(int)$r['organization_id'],'session_version'=>(int)$r['actor_session']];botsActor($db,$u,$p);$fresh=botsBinding($db,$p);$row=botsRow($db,$p,(int)$r['id']);if(!$fresh||!(int)$fresh['active']||$row['claim']!==$r['claim']||(int)$row['lease_until']<=time()||$fresh['identity_hash']!==$b['identity_hash'])throw new Problem('Задание отозвано.',409);botsAssertSnapshot($db,$row,$fresh);};$check();if(botsTarget($c,$transport)!==$r['target_revision'])throw new Problem('Редакция цели изменилась.',409);$check();
+    $mutating=true;$remote=$cmd==='create'?$send($c,'PUT',$path,['accountId'=>$c['account_id'],'channelId'=>$c['channel_id'],'revision'=>$r['target_revision'],'text'=>$r['message']]):$send($c,'POST',$path.'/retry',null);
+   }elseif($cmd==='cancel'){botsActor($db,['id'=>(int)$r['actor_id'],'organization_id'=>(int)$r['organization_id'],'session_version'=>(int)$r['actor_session']],(int)$r['project_id']);$mutating=true;$remote=$send($c,'POST',$path.'/cancel',null);}else $remote=$send($c,'GET',$path,null);
+   [$state,$attempts,$pid]=botsReceipt($c,$r,$remote);$code='';
+  }catch(\Throwable $e){if(!$mutating&&$r['command']==='create'){$state='failed';$code='preflight';}else{$state='uncertain';$code='reconcile_required';}}
+  $saved=atomic($db,function()use($db,$r,$state,$code,$attempts,$pid){$now=time();$n=query($db,'UPDATE bots_messages SET state=?,claim=NULL,lease_until=NULL,remote_attempts=?,provider_message_id=?,error_code=?,available_at=?,updated_at=? WHERE id=? AND claim=?',[$state,$attempts,$pid,$code,$now+30,$now,$r['id'],$r['claim']])->rowCount();if($n&&($state!==$r['state']||$code!==$r['error_code']))botsEvent($db,$r,(int)$r['actor_id'],$state,$code);return $n;});if($saved){$report['processed']++;if(isset($report[$state]))$report[$state]++;}
+ }return $report;
+}
+function botsPage(PDO $db,array $u,?int $project,array $args): array {
+ $u=organizationUser($db,$u);$d=['botsProjects'=>rightProjects($db,$u,'connections'),'botsProject'=>$project,'botsBinding'=>null,'botsManager'=>false,'botsOwner'=>$u['role']==='owner','botsReleases'=>[],'botsSelectedRelease'=>null,'botsMessages'=>[],'botsMessage'=>null,'botsEvents'=>[]];if($project===null)return $d;
+ requireProjectRight($db,$u,$project,'connections');$d['botsManager']=roleAllows(projectRole($db,$u,$project),'manage');$d['botsBinding']=botsBinding($db,$project);$d['botsReleases']=query($db,"SELECT id,tag FROM project_releases WHERE project_id=? AND state='confirmed' ORDER BY id DESC LIMIT 100",[$project])->fetchAll();$rel=optionalId($args['release']??'');if($rel!==null)$d['botsSelectedRelease']=botsRelease($db,$project,$rel);
+ $d['botsMessages']=query($db,'SELECT id,release_id,state,created_at FROM bots_messages WHERE project_id=?'.($rel===null?'':' AND release_id=?').' ORDER BY id DESC LIMIT 100',$rel===null?[$project]:[$project,$rel])->fetchAll();$id=optionalId($args['id']??'');if($id!==null){$d['botsMessage']=botsRow($db,$project,$id);$d['botsEvents']=query($db,'SELECT * FROM bots_events WHERE project_id=? AND message_id=? ORDER BY id DESC LIMIT 100',[$project,$id])->fetchAll();}return $d;
+}

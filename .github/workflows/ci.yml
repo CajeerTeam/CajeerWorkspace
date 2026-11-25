@@ -93,6 +93,8 @@ jobs:
       - run: php tests/editorial_db.php
       - run: python3 tests/logs_schema.py
       - run: php tests/logs_db.php
+      - run: python3 tests/bots_schema.py
+      - run: php tests/bots_db.php
       - if: matrix.php == '8.4'
         uses: actions/checkout@v4
         with:
@@ -128,7 +130,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs', 'bots']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -209,6 +211,8 @@ jobs:
         run: php tests/editorial_db.php --postgres
       - if: matrix.suite == 'logs'
         run: php tests/logs_db.php --postgres
+      - if: matrix.suite == 'bots'
+        run: php tests/bots_db.php --postgres
       - if: matrix.suite == 'lite'
         uses: actions/checkout@v4
         with:
@@ -218,3 +222,27 @@ jobs:
           persist-credentials: false
       - if: matrix.suite == 'lite'
         run: WORKSPACE_LITE_TEST_SOURCE="$GITHUB_WORKSPACE/.ci-lite" php tests/lite_db.php --postgres
+  bots-compatibility:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/cajeerbots?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: CajeerTeam/CajeerBots
+          ref: f1366da1c548b124af379b139f381dbc3ab165e6
+          path: .ci-bots
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - run: npm install --global pnpm@9.15.9
+      - working-directory: .ci-bots
+        run: |
+          git apply --check ../integrations/cajeerbots-1.0.2-workspace.patch
+          git apply ../integrations/cajeerbots-1.0.2-workspace.patch
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm typecheck
+          pnpm exec vitest run packages/db/src/workspace-delivery.spec.ts apps/api/src/modules/bot-runtime/workspace-delivery.spec.ts apps/worker/src/workers/workspace-delivery.spec.ts

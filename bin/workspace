@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.8.0
+CajeerWorkspace PHP 0.8.1
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -69,6 +69,7 @@ CajeerWorkspace PHP 0.8.0
   php bin/workspace lite:work JOB_ID
   php bin/workspace lite:restore JOB_ID --offline
   php bin/workspace lite:reconcile JOB_ID [--offline]
+  php bin/workspace bots:tick [LIMIT]
   php bin/workspace logs:tick [LIMIT]
   php bin/workspace logs:prune
   php bin/workspace version
@@ -141,6 +142,8 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'bots:tick':
+            if($argc>3)throw new Problem('Формат: bots:tick [LIMIT]');echo json_encode(botsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'logs:tick':
             if($argc>3)throw new Problem('Формат: logs:tick [LIMIT]');echo json_encode(logsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'logs:prune':

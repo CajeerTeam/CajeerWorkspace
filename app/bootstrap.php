@@ -37,3 +37,4 @@ require_once __DIR__ . '/Lite.php';
 require_once __DIR__ . '/Editorial.php';
 
 require_once __DIR__ . '/Logs.php';
+require_once __DIR__ . '/Bots.php';

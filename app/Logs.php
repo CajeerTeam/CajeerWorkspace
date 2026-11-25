@@ -8,6 +8,7 @@ const LOG_EVENTS = [
  'task.create'=>'info','task.state'=>'info','release.create'=>'info','release.verify'=>'info','release.reverify'=>'info','release.confirm'=>'notice','release.cancel'=>'notice','release.failed'=>'error','release.ci_failed'=>'error',
  'deploy.queue'=>'info','deploy.start'=>'info','deploy.recover'=>'warning','deploy.cancel'=>'notice','deploy.succeeded'=>'notice','deploy.rolled_back'=>'warning','deploy.failed'=>'error','deploy.recovery_required'=>'critical',
  'editorial.create'=>'info','editorial.book'=>'info','editorial.cms'=>'info','editorial.forum'=>'info','editorial.abandon'=>'notice','editorial.cms.failed'=>'error','editorial.forum.failed'=>'error',
+ 'bots.sent'=>'notice','bots.uncertain'=>'warning','bots.failed'=>'error','bots.cancelled'=>'notice',
  'host.aapanel.ok'=>'info','host.aapanel.error'=>'error','host.servers.ok'=>'info','host.servers.error'=>'error','github.sync.failed'=>'error',
 ];
 const LOG_RETRY_WINDOW=43200; // strictly below the provider's minimum 24h idempotency window
@@ -81,6 +82,7 @@ function logsAudit(PDO $db,array $u,?int $project,string $event,int $object): vo
  $release=$env=$host=null;
  if(str_starts_with($event,'release.'))$release=$object;
  elseif(str_starts_with($event,'deploy.')){$r=query($db,'SELECT d.release_id,e.kind,s.host_id FROM deployments d JOIN infra_sites s ON s.id=d.site_id JOIN infra_environments e ON e.id=s.environment_id WHERE d.id=? AND d.project_id=?',[$object,$project])->fetch();if(!$r)return;$release=(int)$r['release_id'];$env=$r['kind'];$host=(int)$r['host_id'];}
+ elseif(str_starts_with($event,'bots.')){$r=query($db,'SELECT release_id FROM bots_messages WHERE id=? AND project_id=?',[$object,$project])->fetch();if(!$r)return;$release=$r['release_id']===null?null:(int)$r['release_id'];}
  elseif(str_starts_with($event,'editorial.')){$r=query($db,'SELECT release_id FROM editorial_releases WHERE id=? AND project_id=?',[$object,$project])->fetch();if(!$r)return;$release=(int)$r['release_id'];}
  logsEnqueue($db,(int)$u['organization_id'],$project,$event,$object,$env,$release,$host);
 }

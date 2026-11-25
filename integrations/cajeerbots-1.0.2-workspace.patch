@@ -1,0 +1,431 @@
+diff --git a/.env.example b/.env.example
+--- a/.env.example
++++ b/.env.example
+@@ -104,3 +104,6 @@
+ EXTENSIONS_ALLOW_LOCAL=false
+ # CLI (set CAJEER_API_KEY or CAJEER_JWT in operator environment)
+ CAJEER_API_URL=http://127.0.0.1:3000
++
++# Optional Workspace delivery compatibility bridge, identical in API and worker.
++WORKSPACE_BOT_TARGETS={}
+diff --git a/.env.production.example b/.env.production.example
+--- a/.env.production.example
++++ b/.env.production.example
+@@ -37,3 +37,6 @@
+ EXTENSIONS_ALLOW_LOCAL=false
+ # CLI (set CAJEER_API_KEY or CAJEER_JWT in operator environment)
+ CAJEER_API_URL=http://127.0.0.1:3000
++
++# Optional Workspace delivery compatibility bridge, identical in API and worker.
++WORKSPACE_BOT_TARGETS={}
+diff --git a/apps/api/src/modules/bot-runtime/bot-runtime.controller.ts b/apps/api/src/modules/bot-runtime/bot-runtime.controller.ts
+--- a/apps/api/src/modules/bot-runtime/bot-runtime.controller.ts
++++ b/apps/api/src/modules/bot-runtime/bot-runtime.controller.ts
+@@ -1,4 +1,5 @@
+-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
++import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
++import { workspaceScope } from '@cajeerbots/db';
+ import { permissions, type Principal } from '@cajeerbots/security';
+ import { CurrentPrincipal } from '../shared/auth-context.js';
+ import { RequireScopes } from '../shared/scopes.decorator.js';
+@@ -11,6 +12,31 @@
+ @UseGuards(ScopedAuthGuard)
+ export class BotRuntimeController {
+   constructor(private readonly runtime: BotRuntimeService) {}
++
++
++  @Get('workspace-target')
++  @RequireScopes(workspaceScope)
++  workspaceTarget(@Param('communityId') communityId: string, @CurrentPrincipal() principal: Principal) {
++    return this.runtime.workspaceTarget(communityId, principal);
++  }
++
++  @Get('workspace-messages/:id')
++  @RequireScopes(workspaceScope)
++  workspaceMessage(@Param('communityId') communityId: string, @Param('id') id: string, @CurrentPrincipal() principal: Principal) {
++    return this.runtime.workspaceMessage(communityId, id, principal);
++  }
++
++  @Put('workspace-messages/:id')
++  @RequireScopes(workspaceScope)
++  workspaceQueue(@Param('communityId') communityId: string, @Param('id') id: string, @Body() body: unknown, @CurrentPrincipal() principal: Principal) {
++    return this.runtime.workspaceQueue(communityId, id, body, principal);
++  }
++
++  @Post('workspace-messages/:id/:operation')
++  @RequireScopes(workspaceScope)
++  workspaceChange(@Param('communityId') communityId: string, @Param('id') id: string, @Param('operation') operation: string, @CurrentPrincipal() principal: Principal) {
++    return this.runtime.workspaceChange(communityId, id, operation, principal);
++  }
+ 
+   @Get('status')
+   @RequireScopes(permissions.botRuntimeRead)
+diff --git a/apps/api/src/modules/bot-runtime/bot-runtime.service.ts b/apps/api/src/modules/bot-runtime/bot-runtime.service.ts
+--- a/apps/api/src/modules/bot-runtime/bot-runtime.service.ts
++++ b/apps/api/src/modules/bot-runtime/bot-runtime.service.ts
+@@ -1,10 +1,76 @@
+-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+-import { PrismaService } from '@cajeerbots/db';
++import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
++import { createHash } from 'node:crypto';
++import { PrismaService, workspaceTarget, workspaceKeyAllowed, workspaceMarker, workspaceText, workspacePrefix } from '@cajeerbots/db';
+ import type { Principal } from '@cajeerbots/security';
+ 
+ @Injectable()
+ export class BotRuntimeService {
+   constructor(private readonly prisma: PrismaService) {}
++
++
++  private target(communityId: string, principal: Principal) {
++    const target = principal.type === 'api_key' && workspaceKeyAllowed(principal.scopes, communityId) ? workspaceTarget(principal.id, communityId) : null;
++    if (!target) throw new ForbiddenException('Workspace target not allowed');
++    return target;
++  }
++
++  async workspaceTarget(communityId: string, principal: Principal) {
++    const target = this.target(communityId, principal);
++    const account = await this.prisma.botAccount.findFirst({ where: { id: target.accountId, communityId, provider: target.provider, isActive: true } });
++    if (!account || !account.tokenRef) throw new ConflictException('Workspace account unavailable');
++    return { ...target, revision: account.updatedAt.toISOString(), api: 'workspace-delivery-v1', credentialId: principal.id };
++  }
++
++  private workspaceId(id: string) {
++    if (!/^workspace-[a-f0-9]{32}$/.test(id)) throw new BadRequestException('Invalid Workspace message ID');
++  }
++
++  private async workspaceRow(communityId: string, id: string, principal: Principal) {
++    this.workspaceId(id);
++    const target = this.target(communityId, principal);
++    const row = await this.prisma.botOutboundMessage.findFirst({ where: { id, communityId, accountId: target.accountId, provider: target.provider, targetId: target.channelId, targetType: { startsWith: `workspace:${principal.id}:` } } });
++    if (!row) throw new NotFoundException('Workspace message not found');
++    return row;
++  }
++
++  private workspaceReceipt(row: Awaited<ReturnType<BotRuntimeService['workspaceRow']>>) {
++    const status = row.status === 'dead' ? (row.lastError === 'workspace_preflight' ? 'retryable' : row.lastError === 'workspace_cancelled' ? 'cancelled' : 'uncertain') : row.status === 'sending' && row.availableAt.getTime() <= Date.now() ? 'uncertain' : row.status === 'failed' ? 'uncertain' : row.status;
++    return { id: row.id, communityId: row.communityId, accountId: row.accountId, provider: row.provider, channelId: row.targetId, revision: row.targetType.substring(row.targetType.indexOf(':', 'workspace:'.length) + 1), sha256: createHash('sha256').update(row.text, 'utf8').digest('hex'), status, attempts: row.attempts, providerMessageId: row.providerMessageId };
++  }
++
++  async workspaceMessage(communityId: string, id: string, principal: Principal) {
++    return this.workspaceReceipt(await this.workspaceRow(communityId, id, principal));
++  }
++
++  async workspaceQueue(communityId: string, id: string, input: unknown, principal: Principal) {
++    this.workspaceId(id);
++    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('Invalid Workspace payload');
++    const body = input as Record<string, unknown>;
++    if (Object.keys(body).sort().join(',') !== 'accountId,channelId,revision,text' || !workspaceText(body.text)) throw new BadRequestException('Invalid Workspace payload');
++    const target = await this.workspaceTarget(communityId, principal);
++    if (body.accountId !== target.accountId || body.channelId !== target.channelId || body.revision !== target.revision) throw new ConflictException('Workspace target changed');
++    const text = body.text;
++    const marker = workspaceMarker(principal.id, target.revision);
++    // An immutable primary key is the remote idempotency boundary. No update of existing content.
++    const row = await this.prisma.botOutboundMessage.upsert({ where: { id }, create: { id, communityId, accountId: target.accountId, provider: target.provider, targetId: target.channelId, targetType: marker, text }, update: {} });
++    if (row.communityId !== communityId || row.accountId !== target.accountId || row.provider !== target.provider || row.targetId !== target.channelId || row.targetType !== marker || row.text !== text) throw new ConflictException('Workspace message ID already used');
++    return this.workspaceReceipt(row);
++  }
++
++  async workspaceChange(communityId: string, id: string, operation: string, principal: Principal) {
++    const row = await this.workspaceRow(communityId, id, principal);
++    if (operation === 'cancel') {
++      if (row.status === 'dead' && row.lastError === 'workspace_cancelled') return this.workspaceReceipt(row);
++      const changed = await this.prisma.botOutboundMessage.updateMany({ where: { id, targetType: row.targetType, OR: [{ status: 'pending' }, { status: 'dead', lastError: 'workspace_preflight' }] }, data: { status: 'dead', lastError: 'workspace_cancelled' } });
++      if (!changed.count) throw new ConflictException('Provider delivery already claimed');
++    } else if (operation === 'retry') {
++      const target = await this.workspaceTarget(communityId, principal);
++      if (row.targetType !== workspaceMarker(principal.id, target.revision)) throw new ConflictException('Workspace target changed');
++      const changed = await this.prisma.botOutboundMessage.updateMany({ where: { id, targetType: row.targetType, status: 'dead', lastError: 'workspace_preflight', attempts: { lt: 8 } }, data: { status: 'pending', availableAt: new Date(), lastError: null } });
++      if (!changed.count) throw new ConflictException('Only verified pre-send failure can be retried');
++    } else throw new BadRequestException('Invalid Workspace operation');
++    return this.workspaceMessage(communityId, id, principal);
++  }
+ 
+   async status(communityId: string, accountId?: string) {
+     const where = { account: { communityId }, ...(accountId ? { accountId } : {}) };
+@@ -60,7 +126,7 @@
+     const message = await this.prisma.botOutboundMessage.findFirst({ where: { id, communityId } });
+     if (!message) throw new NotFoundException('Outbound message не найден');
+     const changed = await this.prisma.botOutboundMessage.updateMany({
+-      where: { id, communityId, provider: { not: 'discord' }, status: { in: ['failed', 'dead'] } },
++      where: { id, communityId, NOT: { id: { startsWith: workspacePrefix } }, provider: { not: 'discord' }, status: { in: ['failed', 'dead'] } },
+       data: { status: 'pending', availableAt: new Date(), lastError: null, ...(resetAttempts ? { attempts: 0 } : {}) },
+     });
+     if (!changed.count) throw new ConflictException('Only failed non-interaction messages can be retried');
+diff --git a/apps/api/src/modules/bot-runtime/workspace-delivery.spec.ts b/apps/api/src/modules/bot-runtime/workspace-delivery.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/api/src/modules/bot-runtime/workspace-delivery.spec.ts
+@@ -0,0 +1,33 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++import type { PrismaService } from '@cajeerbots/db';
++import type { Principal } from '@cajeerbots/security';
++import { BotRuntimeService } from './bot-runtime.service.js';
++const principal: Principal = { id: 'key', type: 'api_key', scopes: ['workspace:messages', 'community:c1'] };
++const revision = '2026-11-25T00:00:00.000Z';
++const id = 'workspace-' + 'a'.repeat(32);
++const input = { accountId: 'a1', channelId: '-100123456789', revision, text: 'Release v1' };
++afterEach(() => vi.unstubAllEnvs());
++describe('Workspace outbound API', () => {
++  it('idempotent immutable message, community, target, cancel and unknown-state fences', async () => {
++    vi.stubEnv('WORKSPACE_BOT_TARGETS', JSON.stringify({ key: { communityId: 'c1', accountId: 'a1', provider: 'telegram', channelId: '-100123456789' } }));
++    let row: any;
++    const prisma = { botAccount: { findFirst: vi.fn(async () => ({ updatedAt: new Date(revision), tokenRef: 'env:TEST' })) }, botOutboundMessage: {
++      upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => row ??= { ...create, status: 'pending', attempts: 0, providerMessageId: null, availableAt: new Date(), lastError: null }),
++      findFirst: vi.fn(async ({ where }: { where: { id: string } }) => row && where.id === row.id ? row : null),
++      updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { if (row.status !== 'pending') return { count: 0 }; row = { ...row, ...data }; return { count: 1 }; }),
++    }} as unknown as PrismaService;
++    const api = new BotRuntimeService(prisma);
++    await expect(api.workspaceTarget('c2', principal)).rejects.toThrow();
++    await expect(api.workspaceQueue('c1', id, { ...input, channelId: '-100999999999' }, principal)).rejects.toThrow();
++    const receipt = await api.workspaceQueue('c1', id, input, principal);
++    expect(receipt.status).toBe('pending'); expect(receipt.revision).toBe(revision);
++    expect(await api.workspaceQueue('c1', id, input, principal)).toEqual(receipt);
++    await expect(api.workspaceQueue('c1', id, { ...input, text: 'changed' }, principal)).rejects.toThrow();
++    row.status = 'sending'; row.availableAt = new Date(0);
++    expect((await api.workspaceMessage('c1', id, principal)).status).toBe('uncertain');
++    await expect(api.workspaceChange('c1', id, 'retry', principal)).rejects.toThrow();
++    row.status = 'pending';
++    expect((await api.workspaceChange('c1', id, 'cancel', principal)).status).toBe('cancelled');
++    expect((await api.workspaceChange('c1', id, 'cancel', principal)).status).toBe('cancelled');
++  });
++});
+diff --git a/apps/bot-runtime/src/runtime/provider-sender.ts b/apps/bot-runtime/src/runtime/provider-sender.ts
+--- a/apps/bot-runtime/src/runtime/provider-sender.ts
++++ b/apps/bot-runtime/src/runtime/provider-sender.ts
+@@ -12,6 +12,7 @@
+   if (!message.targetId) return;
+   if (!account.id.startsWith('env:') && !await prisma.botAccount.findFirst({ where: { id: account.id, communityId: account.communityId, provider: account.provider, isActive: true, tokenRef: account.tokenRef } })) return;
+   const id = message.outboundMessageId;
++  if (id?.startsWith('workspace-')) throw new Error('Workspace delivery requires dedicated worker');
+   if (!id) { await sendText(account, message.targetId, message.text, message.buttons); return; }
+   const claim = await prisma.botOutboundMessage.updateMany({ where: { id, accountId: account.id, communityId: account.communityId, status: { in: ['pending', 'failed'] }, availableAt: { lte: new Date() } }, data: { status: 'sending', attempts: { increment: 1 }, availableAt: new Date(Date.now() + 300_000) } });
+   if (!claim.count) return;
+@@ -27,6 +28,7 @@
+ }
+ 
+ export async function retryOutboundMessage(prisma: PrismaService, messageId: string): Promise<{ sent: boolean; id: string }> {
++  if (messageId.startsWith('workspace-')) throw new Error('Workspace delivery requires dedicated worker');
+   const message = await prisma.botOutboundMessage.findUnique({ where: { id: messageId }, include: { account: true } });
+   if (!message) throw new Error(`Bot outbound message не найден: ${messageId}`);
+   const account: RuntimeBotAccount = {
+diff --git a/apps/cli/src/commands/runtime.command.ts b/apps/cli/src/commands/runtime.command.ts
+--- a/apps/cli/src/commands/runtime.command.ts
++++ b/apps/cli/src/commands/runtime.command.ts
+@@ -46,7 +46,7 @@
+     .option('--reset-attempts', 'обнулить счётчик попыток')
+     .action(async (options: { id: string; resetAttempts?: boolean }) => {
+       await withPrisma(async (prisma) => {
+-        const changed = await prisma.botOutboundMessage.updateMany({ where: { id: options.id, provider: { not: 'discord' }, status: { in: ['failed', 'dead'] } }, data: { status: 'pending', availableAt: new Date(), lastError: null, ...(options.resetAttempts ? { attempts: 0 } : {}) } });
++        const changed = await prisma.botOutboundMessage.updateMany({ where: { id: options.id, NOT: { id: { startsWith: 'workspace-' } }, provider: { not: 'discord' }, status: { in: ['failed', 'dead'] } }, data: { status: 'pending', availableAt: new Date(), lastError: null, ...(options.resetAttempts ? { attempts: 0 } : {}) } });
+         if (!changed.count) throw new Error('Only failed non-interaction messages can be retried');
+         console.log(JSON.stringify(await prisma.botOutboundMessage.findUniqueOrThrow({ where: { id: options.id } }), null, 2));
+       });
+diff --git a/apps/worker/src/workers/bot-outbound.worker.ts b/apps/worker/src/workers/bot-outbound.worker.ts
+--- a/apps/worker/src/workers/bot-outbound.worker.ts
++++ b/apps/worker/src/workers/bot-outbound.worker.ts
+@@ -1,7 +1,7 @@
+ import { createHash } from 'node:crypto';
+ import { renderProviderButtons } from '@cajeerbots/message-core';
+ import { SerialPoller } from '@cajeerbots/core';
+-import { PrismaService } from '@cajeerbots/db';
++import { PrismaService, workspacePrefix, workspaceTarget, workspaceMarker, workspaceKeyAllowed, workspaceText } from '@cajeerbots/db';
+ import { decryptSecret, assertBotTokenRef } from '@cajeerbots/security';
+ 
+ export interface BotOutboundWorkerOptions {
+@@ -36,7 +36,7 @@
+     this.running = true;
+     try {
+       const rows = await this.prisma.botOutboundMessage.findMany({
+-        where: { status: { in: ['pending', 'failed', 'sending'] }, availableAt: { lte: new Date() } },
++        where: { OR: [{ id: { startsWith: workspacePrefix }, status: 'pending' }, { NOT: { id: { startsWith: workspacePrefix } }, status: { in: ['pending', 'failed', 'sending'] } }], availableAt: { lte: new Date() } },
+         orderBy: { createdAt: 'asc' },
+         take: this.options.batchSize ?? 25,
+         include: { account: true },
+@@ -48,6 +48,7 @@
+   }
+ 
+   private async deliver(id: string): Promise<void> {
++    if (id.startsWith(workspacePrefix)) { await this.deliverWorkspace(id); return; }
+     const maxAttempts = this.options.maxAttempts ?? 8;
+     const claim = await this.prisma.botOutboundMessage.updateMany({ where: { id, status: { in: ['pending', 'failed', 'sending'] }, availableAt: { lte: new Date() } }, data: { status: 'sending', attempts: { increment: 1 }, availableAt: new Date(Date.now() + 300_000) } });
+     if (!claim.count) return;
+@@ -76,6 +77,33 @@
+           availableAt: new Date(Date.now() + Math.min(300_000, 2 ** attempts * 1000)),
+         },
+       });
++    }
++  }
++
++
++  private async deliverWorkspace(id: string): Promise<void> {
++    const claim = await this.prisma.botOutboundMessage.updateMany({ where: { id, status: 'pending', availableAt: { lte: new Date() } }, data: { status: 'sending', attempts: { increment: 1 }, availableAt: new Date(Date.now() + 300_000) } });
++    if (!claim.count) return;
++    const row = await this.prisma.botOutboundMessage.findUniqueOrThrow({ where: { id }, include: { account: true } });
++    const where = { id, status: 'sending' as const, attempts: row.attempts };
++    let token: string;
++    try {
++      const key = row.targetType.split(':')[1] ?? '';
++      const target = workspaceTarget(key, row.communityId);
++      const apiKey = await this.prisma.apiKey.findFirst({ where: { id: key, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } });
++      if (!apiKey || !workspaceKeyAllowed(apiKey.scopes, row.communityId) || !target || target.accountId !== row.accountId || target.channelId !== row.targetId || target.provider !== row.provider || row.account.communityId !== row.communityId || row.account.provider !== row.provider || !row.account.isActive || row.targetType !== workspaceMarker(key, row.account.updatedAt.toISOString()) || !workspaceText(row.text) || row.attempts > 8) throw new Error('Workspace preflight failed');
++      token = await this.resolveToken(row.account.tokenRef, row.account.provider, row.account.communityId);
++    } catch {
++      await this.prisma.botOutboundMessage.updateMany({ where, data: { status: 'dead', lastError: 'workspace_preflight' } });
++      return;
++    }
++    // Once a provider request starts, an error or process crash is ambiguous. Never auto-retry.
++    try {
++      const providerMessageId = await sendText(row.provider, token, row.targetId, row.text, undefined, id);
++      if (!providerMessageId) throw new Error('Missing receipt');
++      await this.prisma.botOutboundMessage.updateMany({ where, data: { status: 'sent', providerMessageId, sentAt: new Date(), lastError: null } });
++    } catch {
++      await this.prisma.botOutboundMessage.updateMany({ where, data: { status: 'dead', lastError: 'workspace_uncertain' } });
+     }
+   }
+ 
+diff --git a/apps/worker/src/workers/workspace-delivery.spec.ts b/apps/worker/src/workers/workspace-delivery.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/worker/src/workers/workspace-delivery.spec.ts
+@@ -0,0 +1,25 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++import type { PrismaService } from '@cajeerbots/db';
++import { BotOutboundWorker } from './bot-outbound.worker.js';
++const revision = '2026-11-25T00:00:00.000Z';
++afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
++describe('Workspace delivery worker', () => {
++  it('never repeats an ambiguous provider request and preserves receipt on success', async () => {
++    vi.stubEnv('WORKSPACE_BOT_TARGETS', JSON.stringify({ key: { communityId: 'c1', accountId: 'a1', provider: 'telegram', channelId: '-100123456789' } }));
++    vi.stubEnv('TELEGRAM_BOT_TOKEN_WORKSPACE', 'test-only');
++    const row = { id: 'workspace-' + 'a'.repeat(32), communityId: 'c1', accountId: 'a1', provider: 'telegram', targetId: '-100123456789', targetType: `workspace:key:${revision}`, text: 'Release', status: 'pending', attempts: 0, lastError: null as string | null, providerMessageId: null as string | null, availableAt: new Date(0), account: { id: 'a1', communityId: 'c1', provider: 'telegram', isActive: true, tokenRef: 'env:TELEGRAM_BOT_TOKEN_WORKSPACE', updatedAt: new Date(revision) } };
++    const prisma = { botOutboundMessage: { findMany: vi.fn(async () => row.status === 'pending' ? [row] : []), findUniqueOrThrow: vi.fn(async () => row), updateMany: vi.fn(async ({ where, data }: { where: { status: string }; data: Record<string, unknown> & { attempts?: { increment: number } } }) => {
++      if (where.status !== row.status) return { count: 0 }; const { attempts, ...rest } = data; Object.assign(row, rest); if (attempts?.increment) row.attempts += attempts.increment; return { count: 1 };
++    }) }, apiKey: { findFirst: vi.fn(async () => ({ scopes: ['workspace:messages', 'community:c1'] })) } } as unknown as PrismaService;
++    const worker = new BotOutboundWorker(prisma);
++    const send = vi.fn(async () => { throw new Error('lost response'); }); vi.stubGlobal('fetch', send);
++    await worker.tick(); expect(row.status).toBe('dead'); expect(row.lastError).toBe('workspace_uncertain'); await worker.tick(); expect(send).toHaveBeenCalledTimes(1);
++    // Explicitly simulate a separate queued message and an actual pre-send failure.
++    row.id = 'workspace-' + 'b'.repeat(32); row.status = 'pending'; row.attempts = 0; row.availableAt = new Date(0); row.account.isActive = false;
++    await worker.tick(); expect(row.lastError).toBe('workspace_preflight'); expect(send).toHaveBeenCalledTimes(1);
++    // Only a safe pre-send failure is retried by the dedicated API.
++    row.status = 'pending'; row.availableAt = new Date(0); row.account.isActive = true;
++    const successful = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 123 } }) })); vi.stubGlobal('fetch', successful);
++    await worker.tick(); expect(row.status).toBe('sent'); expect(row.providerMessageId).toBe('123'); expect(successful).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/docs/workspace-delivery.md b/docs/workspace-delivery.md
+new file mode 100644
+--- /dev/null
++++ b/docs/workspace-delivery.md
+@@ -0,0 +1,14 @@
++# Workspace delivery bridge v1 (compatibility patch for CajeerBots 1.0.2)
++
++Install all files from the compatibility patch on the exact CajeerBots 1.0.2 source. Stop API, bot runtime, worker, scheduler and CLI jobs before rebuilding; do not mix old and new workers. No Prisma schema change is necessary: the patch uses the native `bot_outbound_messages` table and a reserved `workspace-` ID prefix. Configure both API and worker with the same `WORKSPACE_BOT_TARGETS` JSON, e.g. `{"API_KEY_ID":{"communityId":"COMMUNITY_ID","accountId":"ACCOUNT_ID","provider":"telegram","channelId":"-100123456789"}}`. One configured target per key. Do not give the key other permissions; create it with exactly `workspace:messages` and `community:COMMUNITY_ID`. API accepts only API keys, not JWT or global/bootstrap keys. `channelId` is a string: Telegram group/supergroup/channel using `-100…`, VK positive peer ID. Ensure bot membership, posting permissions, and token references in Bots before enabling. Discord is not supported by this bridge.
++
++API prefix `/api/communities/{communityId}/bot-runtime`, header `x-api-key`. Private opt-in bridge surface (not a replacement for the general versioned OpenAPI/SDK):
++
++- `GET /workspace-target` returns `api: workspace-delivery-v1`, `credentialId`, `communityId`, `accountId`, `provider`, `channelId`, and `revision` (bot account `updatedAt`, ISO UTC with milliseconds).
++- `PUT /workspace-messages/{id}` accepts exactly `accountId`, `channelId`, `revision`, `text`. `id` is `workspace-` followed by 32 lowercase hexadecimal characters, text plain UTF-8, max 2000 Unicode code points and 8000 bytes. An identical request uses the existing row; changed content, owner or destination is rejected. A successful receipt means queued/known, not necessarily sent.
++- `GET /workspace-messages/{id}` returns a receipt only for the key's own allowlisted destination. `POST /workspace-messages/{id}/cancel` cancels if pending or verified preflight failure. `POST /workspace-messages/{id}/retry` retries only verified preflight failure, max eight claims total. No automatic retry of an ambiguous provider request. Neither operation can resurrect sent or uncertain messages.
++- Receipt: `id`, `communityId`, `accountId`, `provider`, `channelId`, `revision`, `sha256` (UTF-8 text), `status`, `attempts`, `providerMessageId` (null until sent). Status: `pending`, `sending`, `sent`, `retryable`, `cancelled`, `uncertain`. A worker crash after claim is `uncertain` once its five-minute lease elapses, even if no request actually went out. Provider errors after the send boundary are always uncertain. Provider receipt is not proof of recipient reading the message.
++
++The API validates the account and target; before contacting Telegram/VK the native worker validates current API-key grant, account revision, allowlist, token reference and message. Standard retry, scheduler recovery and bot runtime retry exclude these IDs. Revoking a key or disabling its allowlist stops new claims that have not crossed the provider boundary; it cannot undo an already started call. Do not manually modify or delete these rows, restore an older database or start an unpatched worker while any message may have been handed off. Back up the database and reconcile with provider history first. A changed account revision requires a new preview (cancel unsent old row first). A rotated token under the same reference is not a new account revision. Key-ID replacement/target remapping requires coordinated operator migration; do not transparently replay historical deliveries with a new key.
++
++Build and verify: `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, `pnpm test`. Run API + worker together with the patched build, then send a harmless test message to an authorized test channel through Workspace. Test cancel, safe preflight failure and status; inspect provider history for duplicate-free delivery. Do not interpret unit tests as live-provider acceptance.
+diff --git a/packages/db/src/index.ts b/packages/db/src/index.ts
+--- a/packages/db/src/index.ts
++++ b/packages/db/src/index.ts
+@@ -1,3 +1,5 @@
+ export * from './prisma.service.js';
+ export { Prisma } from '../../../prisma/generated/client/index.js';
+ export * from './provider-records.js';
++
++export * from './workspace-delivery.js';
+diff --git a/packages/db/src/workspace-delivery.spec.ts b/packages/db/src/workspace-delivery.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/db/src/workspace-delivery.spec.ts
+@@ -0,0 +1,23 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++import { workspaceTarget, workspaceText, workspaceKeyAllowed, workspaceMarker } from './workspace-delivery.js';
++afterEach(() => vi.unstubAllEnvs());
++describe('Workspace channel boundary', () => {
++  it('requires exact key, community and valid channel', () => {
++    vi.stubEnv('WORKSPACE_BOT_TARGETS', JSON.stringify({ key: { communityId: 'c1', accountId: 'a1', provider: 'telegram', channelId: '-100123456789' } }));
++    expect(workspaceTarget('key', 'c1')).toEqual({ communityId: 'c1', accountId: 'a1', provider: 'telegram', channelId: '-100123456789' });
++    expect(workspaceTarget('key', 'c2')).toBeNull();
++    expect(workspaceTarget('other', 'c1')).toBeNull();
++    expect(workspaceTarget('__proto__', 'c1')).toBeNull();
++    expect(workspaceKeyAllowed(['workspace:messages', 'community:c1'], 'c1')).toBe(true);
++    expect(workspaceKeyAllowed(['workspace:messages', '*', 'community:c1'], 'c1')).toBe(false);
++    expect(workspaceKeyAllowed(['workspace:messages', 'community:c2'], 'c1')).toBe(false);
++    expect(workspaceMarker('key', 'rev')).toBe('workspace:key:rev');
++  });
++  it('bounds text and prohibits control characters', () => {
++    expect(workspaceText('Привет\nмир')).toBe(true);
++    expect(workspaceText('a'.repeat(2001))).toBe(false);
++    expect(workspaceText('a\0b')).toBe(false);
++    expect(workspaceText('   ')).toBe(false);
++    expect(workspaceText('🙂'.repeat(2000))).toBe(true);
++  });
++});
+diff --git a/packages/db/src/workspace-delivery.ts b/packages/db/src/workspace-delivery.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/db/src/workspace-delivery.ts
+@@ -0,0 +1,24 @@
++/** Explicit per-key channel allowlist, shared by API and worker. No token values here. */
++export const workspacePrefix = 'workspace-';
++export const workspaceScope = 'workspace:messages';
++export type WorkspaceTarget = { communityId: string; accountId: string; provider: 'telegram' | 'vk'; channelId: string };
++export const workspaceIdentifier = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
++export function workspaceTarget(key: string, community: string): WorkspaceTarget | null {
++  try {
++    const raw = process.env.WORKSPACE_BOT_TARGETS ?? '{}';
++    if (raw.length > 262144 || !workspaceIdentifier(key) || !workspaceIdentifier(community)) return null;
++    const map = JSON.parse(raw);
++    if (!Object.hasOwn(map, key)) return null;
++    const t = map[key];
++    if (!t || t.communityId !== community || !workspaceIdentifier(t.accountId) || typeof t.channelId !== 'string') return null;
++    if (!(t.provider === 'telegram' && /^-100[0-9]{5,16}$/.test(t.channelId) || t.provider === 'vk' && /^[0-9]{1,16}$/.test(t.channelId) && !/^0/.test(t.channelId))) return null;
++    return { communityId: community, accountId: t.accountId, provider: t.provider, channelId: t.channelId };
++  } catch { return null; }
++}
++export function workspaceMarker(key: string, revision: string): string { return `workspace:${key}:${revision}`; }
++export function workspaceText(text: unknown): text is string {
++  return typeof text === 'string' && text.trim().length > 0 && Buffer.byteLength(text, 'utf8') <= 8000 && [...text].length <= 2000 && [...text].every(ch => { const n = ch.codePointAt(0)!; return (n === 9 || n === 10 || n >= 32) && n !== 127 && !(n >= 0xd800 && n <= 0xdfff); });
++}
++export function workspaceKeyAllowed(scopes: string[], community: string): boolean {
++  return scopes.length === 2 && scopes.includes(workspaceScope) && scopes.includes(`community:${community}`);
++}
+diff --git a/packages/scheduler/src/executor.ts b/packages/scheduler/src/executor.ts
+--- a/packages/scheduler/src/executor.ts
++++ b/packages/scheduler/src/executor.ts
+@@ -71,7 +71,7 @@
+       const olderThan = new Date(now.getTime() - Number(context.job.payload?.olderThanSeconds ?? 900) * 1000);
+       const webhookDeliveries = await prisma.webhookDelivery.updateMany({ where: { status: 'processing', updatedAt: { lt: olderThan } }, data: { status: 'failed', lastError: 'stale_processing_requeued_by_scheduler', availableAt: now } });
+       const eventDeliveries = await prisma.eventSubscriptionDelivery.updateMany({ where: { status: 'processing', updatedAt: { lt: olderThan } }, data: { status: 'failed', lockedAt: null, lastError: 'stale_processing_requeued_by_scheduler', availableAt: now } });
+-      const botMessages = await prisma.botOutboundMessage.updateMany({ where: { status: 'sending', updatedAt: { lt: olderThan } }, data: { status: 'failed', lastError: 'stale_sending_requeued_by_scheduler', availableAt: now } });
++      const botMessages = await prisma.botOutboundMessage.updateMany({ where: { status: 'sending', NOT: { id: { startsWith: 'workspace-' } }, updatedAt: { lt: olderThan } }, data: { status: 'failed', lastError: 'stale_sending_requeued_by_scheduler', availableAt: now } });
+       return { status: 'succeeded', result: { webhookDeliveries: webhookDeliveries.count, eventDeliveries: eventDeliveries.count, botMessages: botMessages.count }, logs };
+     }
+     case 'maintenance.diagnostics_snapshot': {
+diff --git a/packages/security/src/permissions.ts b/packages/security/src/permissions.ts
+--- a/packages/security/src/permissions.ts
++++ b/packages/security/src/permissions.ts
+@@ -19,6 +19,7 @@
+ 
+   botRuntimeRead: 'bot_runtime:read',
+   botRuntimeWrite: 'bot_runtime:write',
++  workspaceMessages: 'workspace:messages',
+ 
+   messagesRead: 'messages:read',
+   messagesWrite: 'messages:write',
+@@ -141,6 +142,7 @@
+   [permissions.botAccountsWrite]: 'Создание и изменение bot accounts.',
+   [permissions.botRuntimeRead]: 'Чтение runtime status, inbound updates и outbound messages ботов.',
+   [permissions.botRuntimeWrite]: 'Повторная отправка outbound messages и runtime-действия bot-runtime.',
++  [permissions.workspaceMessages]: 'Изолированная очередь Workspace; требуется конкретный community grant и разрешённая цель.',
+   [permissions.messagesRead]: 'Чтение message templates.',
+   [permissions.messagesWrite]: 'Создание, изменение и рендер message templates.',
+   [permissions.messageCoreRead]: 'Чтение catalog localization, button layouts, forms, render logs и Message Core preview.',
