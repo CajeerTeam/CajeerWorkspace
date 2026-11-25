@@ -12,14 +12,14 @@ function runtimeReport(): array {
         'php'=>['ok'=>PHP_VERSION_ID >= 80300 && PHP_VERSION_ID < 90000,'actual'=>PHP_VERSION,'required'=>'>=8.3 <9.0'],
         'architecture'=>['ok'=>PHP_INT_SIZE === 8,'actual'=>PHP_INT_SIZE*8,'required'=>64],
     ];
-    foreach (['pdo','pdo_sqlite','curl','session'] as $ext) {
+    foreach (['pdo',postgresSelected()?'pdo_pgsql':'pdo_sqlite','curl','session'] as $ext) {
         $checks[$ext]=['ok'=>extension_loaded($ext),'actual'=>extension_loaded($ext)?(phpversion($ext) ?: 'loaded'):'missing','required'=>'loaded'];
     }
     $sqlite=null;
-    if ($checks['pdo']['ok'] && $checks['pdo_sqlite']['ok']) {
+    if ($checks['pdo']['ok'] && ($checks['pdo_sqlite']['ok']??false)) {
         try { $sqlite=(new PDO('sqlite::memory:'))->query('SELECT sqlite_version()')->fetchColumn(); } catch (Throwable) {}
     }
-    $checks['sqlite_version']=['ok'=>is_string($sqlite)&&version_compare($sqlite,'3.27.0','>='),'actual'=>$sqlite,'required'=>'>=3.27.0'];
+    if (!postgresSelected()) $checks['sqlite_version']=['ok'=>is_string($sqlite)&&version_compare($sqlite,'3.27.0','>='),'actual'=>$sqlite,'required'=>'>=3.27.0'];
     $tls=false;
     if ($checks['curl']['ok'] && function_exists('curl_version') && function_exists('curl_init')) {
         try { $tls=in_array('https',curl_version()['protocols']??[],true); } catch (Throwable) {}
@@ -38,10 +38,18 @@ function requireRuntime(): void {
     }
 }
 
-function schemaVersion(PDO $db): int { return (int)$db->query('PRAGMA user_version')->fetchColumn(); }
+function schemaVersion(PDO $db): int {
+    if (isPostgres($db)) {
+        if (!(int)$db->query("SELECT CASE WHEN to_regclass('public.schema_migrations') IS NULL THEN 0 ELSE 1 END")->fetchColumn()) return 0;
+        return (int)$db->query('SELECT COALESCE(MAX(version),0) FROM schema_migrations')->fetchColumn();
+    }
+    return (int)$db->query('PRAGMA user_version')->fetchColumn();
+}
 
 function openDatabase(bool $install=false): PDO {
     requireRuntime();
+    if (postgresSelected()) return postgresConnect();
+    if (getenv('WORKSPACE_DB') && getenv('WORKSPACE_DB')!=='sqlite') throw new Problem('Неизвестный WORKSPACE_DB.',503);
     $file=dataDir().'/workspace.sqlite';
     if (!$install && !is_file($file)) throw new Problem('Рабочее пространство ещё не установлено. Выполните bin/workspace init.',503);
     $db=new PDO('sqlite:'.$file,null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
@@ -51,9 +59,9 @@ function openDatabase(bool $install=false): PDO {
 }
 
 /** Read a contiguous, immutable series of shipped SQL migrations. */
-function migrationFiles(): array {
+function migrationFiles(?PDO $db=null): array {
     $files=[];
-    foreach (glob(ROOT.'/database/*.sql') ?: [] as $path) {
+    foreach (glob(ROOT.'/database/'.($db && isPostgres($db)?'postgresql/':'').'*.sql') ?: [] as $path) {
         if (!preg_match('/\A([0-9]{3})\.sql\z/',basename($path),$m) || !is_file($path)) throw new Problem('Некорректное имя миграции.',503);
         $version=(int)$m[1];
         $sql=file_get_contents($path);
@@ -110,6 +118,7 @@ function backupTarget(string $path): string {
 
 /** Consistent standalone copy; publish only after validation, never overwrite. */
 function snapshotDatabase(PDO $source,string $path): array {
+    if (isPostgres($source)) throw new Problem('Для PostgreSQL используйте pg_dump и pg_restore согласно docs/ORGANIZATIONS.md.');
     $target=backupTarget($path);
     $dir=dirname($target);
     $tmp=tempnam($dir,'.cws-backup-');

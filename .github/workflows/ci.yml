@@ -23,8 +23,10 @@ jobs:
       - run: python3 tests/web_e2e.py
       - run: php tests/migrations.php
       - run: python3 tests/release.py
+      - run: python3 tests/tenant_schema.py
+      - run: python3 tests/tenant_e2e.py
   package:
-    needs: verify
+    needs: [verify, postgres]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +37,38 @@ jobs:
           name: CajeerWorkspace-release
           path: dist/*
           if-no-files-found: error
+
+  postgres:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: ['14', '16']
+    services:
+      db:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_DB: workspace
+          POSTGRES_USER: workspace
+          POSTGRES_PASSWORD: ci-disposable-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workspace -d workspace"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGDATABASE: workspace
+      PGUSER: workspace
+      PGPASSWORD: ci-disposable-password
+      PGSSLMODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, pdo_pgsql, curl
+          coverage: none
+      - run: python3 tests/tenant_e2e.py --postgres

@@ -5,4 +5,4 @@
 <form method="post" class="stack"><?php formFields('login') ?>
 <label>Почта<input name="email" type="email" autocomplete="username" maxlength="254" required autofocus></label>
 <label>Пароль<input name="password" type="password" autocomplete="current-password" required></label>
-<button class="primary">Войти</button></form></div></div>
+<button class="primary">Войти</button></form><p><a href="<?= h(url('invite')) ?>">Есть приглашение?</a></p></div></div>

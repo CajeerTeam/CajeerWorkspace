@@ -2,12 +2,14 @@
 $notice = $_SESSION['notice'] ?? null;
 unset($_SESSION['notice']);
 $nav = ['overview'=>'Обзор','projects'=>'Проекты'];
-if ($user) {
+if ($user && !empty($user['organization_id'])) {
+    $nav['search']='Поиск';
     if (can($user,'finance')) $nav['finance']='Финансы';
     if (can($user,'legal')) $nav['documents']='Документы';
     if (can($user,'connections')) $nav['connections']='Подключения';
     if (can($user,'people')) $nav['team']='Команда';
 }
+if ($user) $nav['invite']='Приглашение';
 $current = match ($view) {'project'=>'projects','document'=>'documents',default=>$view};
 ?><!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
@@ -16,7 +18,7 @@ $current = match ($view) {'project'=>'projects','document'=>'documents',default=
 <?php if ($user): ?><div class="shell">
 <aside class="sidebar"><a class="brand" href="<?= h(url('overview')) ?>"><span class="brandmark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Cajeer<span class="brandlight">Workspace</span></span></a>
 <nav aria-label="Основная навигация"><?php foreach ($nav as $n=>$label): ?><a href="<?= h(url($n)) ?>" <?= $current===$n?'aria-current="page"':'' ?>><?= h($label) ?></a><?php endforeach ?></nav>
-<div class="profile"><strong><?= h($user['name']) ?></strong><span><?= h(ROLES[$user['role']]) ?></span><form method="post"><?php formFields('logout') ?><button class="logout">Выйти</button></form></div></aside>
+<div class="profile"><?php if (!empty($user['organizations'])): ?><form method="post"><?php formFields('org.switch') ?><label>Организация<select name="org"><?php selectOptions(array_column($user['organizations'],'name','id'),$user['organization_id']) ?></select></label><button class="secondary compact">Переключить</button></form><?php endif ?><strong><?= h($user['name']) ?></strong><span><?= h(ROLES[$user['role']]) ?></span><form method="post"><?php formFields('logout') ?><button class="logout">Выйти</button></form></div></aside>
 <main id="content" class="main"><div class="heading"><div class="crumb"><a href="<?= h(url('overview')) ?>">Workspace</a><span>/</span><?= h($nav[$current] ?? 'Состояние') ?></div>
 <h1><?= h($title) ?></h1></div>
 <?php if ($notice): ?><div role="status" class="notice"><?= h($notice) ?></div><?php endif; require ROOT.'/views/'.$view.'.php'; ?>

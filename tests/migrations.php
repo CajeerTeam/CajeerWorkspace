@@ -27,6 +27,7 @@ function seededLegacy(string $dir,int $version): array {
     $db->exec('PRAGMA journal_mode=WAL');
     $db->exec('PRAGMA foreign_keys=ON');
     for ($v=1;$v<=$version;$v++) $db->exec(file_get_contents(ROOT.'/database/'.sprintf('%03d',$v).'.sql'));
+    if ($version===3) for ($v=1;$v<=3;$v++) recordMigration($db,$v,migrationFiles(),'applied');
     $db->exec('PRAGMA user_version='.$version);
     $db->exec("INSERT INTO users(id,email,name,role,password_hash) VALUES(1,'test@example.test','Test','owner','test-hash')");
     $db->exec("INSERT INTO projects(id,title,kind) VALUES(1,'Existing','client')");
@@ -39,21 +40,21 @@ function seededLegacy(string $dir,int $version): array {
         $q->bindValue(1,$revision,PDO::PARAM_INT); $q->bindValue(2,hash('sha256',$pdf)); $q->bindValue(3,$pdf,PDO::PARAM_LOB); $q->execute();
     }
     $db->exec("INSERT INTO connection_results VALUES('engine','target',1,'ready',100)");
-    if ($version===2) $db->exec("INSERT INTO connection_checks(connection_key,target_hash,checked_at,ok,summary,transition) VALUES('engine','target',100,1,'ready','initial')");
+    if ($version>=2) $db->exec("INSERT INTO connection_checks(connection_key,target_hash,checked_at,ok,summary,transition) VALUES('engine','target',100,1,'ready','initial')");
     $expected=businessData($db);
     $db=null;
     return $expected;
 }
 function businessData(PDO $db): array {
     $data=[];
-    foreach (['users','projects','tasks','cash_entries','documents','document_versions','connection_results'] as $table) $data[$table]=$db->query("SELECT * FROM $table ORDER BY rowid")->fetchAll(PDO::FETCH_ASSOC);
+    foreach (['users','projects','tasks','cash_entries','documents','document_versions','connection_results'] as $table) $data[$table]=$db->query("SELECT ".($table==='projects'?'id,title,client,kind,created_at':'*')." FROM $table ORDER BY rowid")->fetchAll(PDO::FETCH_ASSOC);
     return $data;
 }
 $root=sys_get_temp_dir().'/cws-migration-'.bin2hex(random_bytes(8));
 mkdir($root,0700); $checks=0;
 try {
     expectMigration(runtimeReport()['ok'],'Runtime requirements');
-    foreach ([1,2] as $version) {
+    foreach ([1,2,3] as $version) {
         $dir=$root.'/v'.$version; $expected=seededLegacy($dir,$version);
         putenv('WORKSPACE_DATA='.$dir);
         failsMigration(fn()=>database(),'Web refuses old schema');
@@ -68,10 +69,11 @@ try {
         $backup=null;
         $db=database(false,true,null,static function($b) use (&$backup) {$backup=$b;});
         expectMigration($backup!==null && is_file($backup['path']) && hash_file('sha256',$backup['path'])===$backup['sha256'],'Snapshot exists and checksum matches');
-        expectMigration(schemaVersion($db)===3 && businessData($db)===$expected,'Migration preserves exact business data');
+        expectMigration(schemaVersion($db)===4 && businessData($db)===$expected,'Migration preserves exact business data');
+        expectMigration((int)$db->query('SELECT COUNT(*) FROM project_members')->fetchColumn()===1 && (int)$db->query('SELECT organization_id FROM projects')->fetchColumn()===1,'Legacy project membership preserved');
         expectMigration((int)$db->query('SELECT COUNT(*) FROM connection_checks')->fetchColumn()===1,'Connection history preserved');
         $history=$db->query('SELECT origin FROM schema_migrations ORDER BY version')->fetchAll(PDO::FETCH_COLUMN);
-        expectMigration($history===($version===1?['legacy','applied','applied']:['legacy','legacy','applied']),'Legacy origin correctly recorded');
+        expectMigration($history===($version===1?['legacy','applied','applied','applied']:($version===2?['legacy','legacy','applied','applied']:['applied','applied','applied','applied'])),'Legacy origin correctly recorded');
         $snapshot=new PDO('sqlite:'.$backup['path']);
         expectMigration(schemaVersion($snapshot)===$version && businessData($snapshot)===$expected,'Restorable snapshot contains old schema and data');
         checkedDatabase($snapshot); $snapshot=null;
@@ -99,7 +101,7 @@ try {
     expectMigration(schemaVersion($snapshot)===1 && businessData($snapshot)===$expected,'Failure snapshot can be restored'); $snapshot=null;
     $dir=$root.'/fresh'; mkdir($dir,0700); putenv('WORKSPACE_DATA='.$dir);
     $db=database(true);
-    expectMigration(schemaVersion($db)===3 && $db->query('SELECT origin FROM schema_migrations ORDER BY version')->fetchAll(PDO::FETCH_COLUMN)===['applied','applied','applied'],'Clean install records all migrations');
+    expectMigration(schemaVersion($db)===4 && $db->query('SELECT origin FROM schema_migrations ORDER BY version')->fetchAll(PDO::FETCH_COLUMN)===['applied','applied','applied','applied'],'Clean install records all migrations');
     expectMigration(!glob($dir.'/pre-upgrade-*.sqlite'),'Fresh install needs no snapshot');
     $db->exec('PRAGMA user_version=99'); $db=null;
     failsMigration(fn()=>database(false,true),'Future schema rejected');

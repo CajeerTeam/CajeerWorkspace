@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.1.2
+CajeerWorkspace PHP 0.2.0
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -44,6 +44,8 @@ CajeerWorkspace PHP 0.1.2
   php bin/workspace profile [--check]
   php bin/workspace protocol ПОДКЛЮЧЕНИЕ [BEFORE_ID]
   php bin/workspace backup /полный/путь/к/новой-копии.sqlite
+  php bin/workspace postgres:import /абсолютный/путь/к/копии.sqlite
+  php bin/workspace connection:assign KEY ORG_ID
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -69,6 +71,10 @@ try {
         echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
         exit($report['ok']?0:1);
     }
+    if ($command==='postgres:import') {
+        if ($argc!==3) throw new Problem('Формат: postgres:import /абсолютный/путь/к/копии.sqlite');
+        echo json_encode(migrateToPostgres($argv[2]),JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES),PHP_EOL; exit(0);
+    }
     if ($command === 'upgrade') {
         if ($argc > 3) throw new Problem('Формат: upgrade [абсолютный путь копии]');
         database(false,true,$argv[2]??null,static function(array $backup) {
@@ -89,7 +95,7 @@ try {
         if ($argc !== 2) throw new Problem('Формат: migrations');
         $db=openDatabase();
         $version=schemaVersion($db);
-        $files=migrationFiles();
+        $files=migrationFiles($db);
         if ($version<1 || $version>SCHEMA_VERSION) throw new Problem('Несовместимая версия схемы.',503);
         validateLedger($db,$version,$files);
         $rows=$version>=3?$db->query('SELECT * FROM schema_migrations ORDER BY version')->fetchAll():[];
@@ -98,6 +104,18 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'connection:assign':
+            if ($argc!==4) throw new Problem('Формат: connection:assign KEY ORG_ID');
+            $key=word($argv[2],48,'Подключение'); $org=numberId($argv[3]);
+            if (!isset(connections()[$key])) throw new Problem('Подключение отсутствует в конфигурации.');
+            atomic($db,function() use($db,$key,$org) {
+                entity($db,'SELECT id FROM organizations WHERE id=?',[$org]);
+                foreach (($org===1?['organization_connections']:['organization_connections','project_connections','connection_results','connection_checks']) as $table) {
+                    if (query($db,"SELECT 1 FROM $table WHERE connection_key=? LIMIT 1",[$key])->fetchColumn()) throw new Problem('Использованный ключ нельзя передать другой организации. Создайте новый ключ.',409);
+                }
+                query($db,'INSERT INTO organization_connections VALUES(?,?)',[$key,$org]);
+            });
+            echo "Подключение назначено.\n"; break;
         case 'user:add':
             if ($argc !== 5) throw new Problem('Формат: user:add EMAIL "Имя" ROLE');
             addUser($db,$argv[2],$argv[3],$argv[4],passwordInput());
@@ -110,9 +128,8 @@ try {
             $email = normalizedEmail($argv[2]);
             $hash = $command === 'user:password' ? passwordHash(passwordInput()) : null;
             atomic($db, static function () use ($db,$email,$command,$hash) {
-                $u = entity($db,'SELECT id,role,enabled FROM users WHERE email=?',[$email]);
-                if ($command === 'user:disable' && $u['enabled'] && $u['role']==='owner' &&
-                    (int)$db->query("SELECT COUNT(*) FROM users WHERE enabled=1 AND role='owner'")->fetchColumn()<=1) {
+                $u = entity($db,'SELECT id,role,enabled FROM users WHERE LOWER(email)=?',[$email]);
+                if ($command === 'user:disable' && $u['enabled'] && query($db,"SELECT 1 FROM organization_members m WHERE m.user_id=? AND m.role='owner' AND NOT EXISTS (SELECT 1 FROM organization_members n JOIN users a ON a.id=n.user_id WHERE n.organization_id=m.organization_id AND n.role='owner' AND a.enabled=1 AND n.user_id<>m.user_id)",[$u['id']])->fetchColumn()) {
                     throw new Problem('В пространстве должен оставаться активный владелец.');
                 }
                 if ($hash !== null) query($db,'UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?',[$hash,$u['id']]);
@@ -123,6 +140,10 @@ try {
         case 'sync':
             if ($argc > 3) throw new Problem('Формат: sync [подключение]');
             $items = connections();
+            if ((int)$db->query('SELECT COUNT(*) FROM organizations')->fetchColumn()>1) {
+                $assigned=$db->query('SELECT connection_key FROM organization_connections')->fetchAll(\PDO::FETCH_COLUMN);
+                $items=array_intersect_key($items,array_flip($assigned));
+            }
             if (isset($argv[2])) {
                 $id = $argv[2];
                 if (!isset($items[$id]) || !$items[$id]['configured']) throw new Problem('Подключение отсутствует или не настроено.');

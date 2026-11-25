@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people'];
 
 function h(mixed $value): string {
@@ -56,7 +56,12 @@ function currentUser(PDO $db): ?array {
         killLogin(); return null;
     }
     $_SESSION['seen'] = $now;
-    return $u;
+    $orgs=organizationsFor($db,(int)$u['id']);
+    if (!$orgs) return array_replace($u,['organization_id'=>null,'organization_name'=>'Нет организации','organizations'=>[],'role'=>'viewer']);
+    $selected=(int)($_SESSION['org']??0);
+    if (!in_array($selected,array_map('intval',array_column($orgs,'id')),true)) $selected=(int)$orgs[0]['id'];
+    $_SESSION['org']=$selected;
+    return organizationUser($db,$u,$selected)+['organizations'=>$orgs];
 }
 
 function formFields(string $act): void {
@@ -90,11 +95,37 @@ function handlePost(PDO $db, ?array $user): never {
         $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time()];
         go('overview');
     }
+    if ($act==='invite.accept') {
+        $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
+        if (!$user) { go('login'); }
+        $_SESSION['org']=$result['organization_id']; unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview');
+    }
     if (!$user) go('login');
     if ($act==='logout') { killLogin(); go('login'); }
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'org.create':
+            $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['invite_token']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
+        case 'org.rename':
+            renameOrganization($db,$user,word($_POST['name']??'',120,'Организация')); go('team');
+        case 'team.rename': case 'team.delete':
+            editTeam($db,$user,numberId($_POST['team_id']??0),$act==='team.delete'?null:word($_POST['name']??'',100,'Команда')); go('team');
+        case 'team.create':
+            createTeam($db,$user,word($_POST['name']??'',100,'Команда')); go('team');
+        case 'team.add': case 'team.remove':
+            changeMembership($db,$user,'team',numberId($_POST['team_id']??0),numberId($_POST['member_id']??0),$act==='team.add'); go('team');
+        case 'project.add': case 'project.remove':
+            changeMembership($db,$user,'project',$projectId(),numberId($_POST['member_id']??0),$act==='project.add'); go('project',['id'=>$projectId()]);
+        case 'org.remove':
+            removeOrganizationMember($db,$user,numberId($_POST['member_id']??0)); go('team');
+        case 'invite.issue':
+            $token=issueInvitation($db,$user,word($_POST['email']??'',254,'Email'),choice($_POST['role']??'',ROLES),numberId($_POST['hours']??0));
+            $_SESSION['invite_token']=$token; go('team');
+        case 'invite.revoke':
+            revokeInvitation($db,$user,numberId($_POST['invite_id']??0)); go('team');
         case 'project.create':
             $id = createProject($db,$user,$key,$_POST);
             $_SESSION['notice'] = 'Проект создан.'; go('project',['id'=>$id]);
@@ -104,7 +135,7 @@ function handlePost(PDO $db, ?array $user): never {
         case 'task.state':
             $id = changeTask($db,$user,$key,numberId($_POST['task_id'] ?? 0),numberId($_POST['version'] ?? 0),choice($_POST['state'] ?? '',STATES));
             $_SESSION['notice'] = 'Статус задачи сохранён.';
-            $task = entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id]);
+            $task = entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id]); allowedProject($db,$user,(int)$task['project_id']);
             go('project',['id'=>$task['project_id']]);
         case 'cash.post':
             recordCash($db,$user,$key,$projectId(),$_POST);
@@ -130,8 +161,8 @@ function csvText(string $s): string {
     return preg_match('/^\s*[=+@-]/u',$s) ? "'".$s : $s;
 }
 
-function sendCsv(PDO $db): never {
-    $entries = ledger($db,$_GET);
+function sendCsv(PDO $db,array $user): never {
+    $entries = ledger($db,$user,$_GET);
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="cashbook.csv"');
     $out = fopen('php://output','wb');
@@ -145,64 +176,84 @@ function sendCsv(PDO $db): never {
 }
 
 function dispatch(PDO $db, ?array $user, string $page): void {
+    if ($page==='invite') { pageView('invite',PAGE_TITLES['invite'],$user); return; }
     if (!$user) {
         if ($page !== 'login') go('login');
         pageView('login',PAGE_TITLES['login']); return;
     }
     if ($page === 'login') go('overview');
+    if (empty($user['organization_id'])) go('invite');
+    $user=organizationUser($db,$user);
+    [$scope,$scopeArgs]=projectScope($db,$user);
     if (isset(PAGE_RIGHTS[$page])) permit($user,PAGE_RIGHTS[$page]);
-    $projectOptions = static fn() => array_column($db->query('SELECT id,title FROM projects ORDER BY title,id')->fetchAll(),'title','id');
+    $projectOptions = static fn() => array_column(query($db,"SELECT p.id,p.title FROM projects p WHERE $scope ORDER BY p.title,p.id",$scopeArgs)->fetchAll(),'title','id');
     $projectId = ($_GET['project'] ?? '') === '' ? null : numberId($_GET['project']);
-    if ($projectId) project($db,$projectId);
+    if ($projectId) allowedProject($db,$user,$projectId);
     $data = [];
     switch ($page) {
+        case 'search':
+            $q=word($_GET['q']??'',120,'Поиск',false);
+            $data=['term'=>$q,'matches'=>[]];
+            if ($q!=='') {
+                $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';
+                $data['matches']['projects']=query($db,"SELECT p.id,p.title FROM projects p WHERE $scope AND (LOWER(p.title) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.client) LIKE LOWER(?) ESCAPE '!') ORDER BY p.id DESC LIMIT 100",[...$scopeArgs,$like,$like])->fetchAll();
+                $data['matches']['tasks']=query($db,"SELECT t.title,t.project_id AS id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE $scope AND LOWER(t.title) LIKE LOWER(?) ESCAPE '!' ORDER BY t.id DESC LIMIT 100",[...$scopeArgs,$like])->fetchAll();
+                if (can($user,'legal')) $data['matches']['documents']=query($db,"SELECT d.id,d.title FROM documents d JOIN projects p ON p.id=d.project_id WHERE $scope AND LOWER(d.title) LIKE LOWER(?) ESCAPE '!' ORDER BY d.id DESC LIMIT 100",[...$scopeArgs,$like])->fetchAll();
+            }
+            break;
         case 'overview':
-            $data['counts'] = $db->query("SELECT (SELECT count(*) FROM projects) projects,count(CASE WHEN state!='done' THEN 1 END) active,count(CASE WHEN state='done' THEN 1 END) done FROM tasks")->fetch();
+            $data['counts'] = query($db,"SELECT COUNT(DISTINCT p.id) projects,count(CASE WHEN t.state!='done' THEN 1 END) active,count(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE $scope",$scopeArgs)->fetch();
             $data['tasks'] = query($db,"SELECT t.*,p.title project_title,u.name assignee FROM tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id
-                WHERE t.state!='done' ORDER BY CASE WHEN t.assignee_id=? THEN 0 ELSE 1 END,t.due_on IS NULL,t.due_on,t.id LIMIT 8",[$user['id']])->fetchAll();
-            $data['recent'] = $db->query('SELECT * FROM projects ORDER BY id DESC LIMIT 4')->fetchAll();
+                WHERE $scope AND t.state!='done' ORDER BY CASE WHEN t.assignee_id=? THEN 0 ELSE 1 END,t.due_on IS NULL,t.due_on,t.id LIMIT 8",[...$scopeArgs,$user['id']])->fetchAll();
+            $data['recent'] = query($db,"SELECT p.* FROM projects p WHERE $scope ORDER BY p.id DESC LIMIT 4",$scopeArgs)->fetchAll();
             break;
         case 'projects':
-            $data['projects'] = $db->query("SELECT p.*,COUNT(t.id) tasks,COUNT(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id GROUP BY p.id ORDER BY p.id DESC")->fetchAll();
+            $data['projects'] = query($db,"SELECT p.*,COUNT(t.id) tasks,COUNT(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE $scope GROUP BY p.id ORDER BY p.id DESC",$scopeArgs)->fetchAll();
             break;
         case 'project':
-            $p = project($db,numberId($_GET['id'] ?? 0));
+            $p = allowedProject($db,$user,numberId($_GET['id'] ?? 0));
             $data = ['project'=>$p,'tasks'=>query($db,"SELECT t.*,u.name assignee FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id WHERE t.project_id=? ORDER BY t.state='done',t.due_on IS NULL,t.due_on,t.id",[$p['id']])->fetchAll()];
-            if (can($user,'manage')) $data['assignable'] = array_column($db->query("SELECT id,name FROM users WHERE enabled=1 AND role IN ('owner','manager','developer') ORDER BY name")->fetchAll(),'name','id');
+            if (can($user,'manage')) {
+                $data['members']=orgMembers($db,$user);
+                $data['projectMembers']=array_map('intval',query($db,'SELECT user_id FROM project_members WHERE project_id=?',[$p['id']])->fetchAll(PDO::FETCH_COLUMN));
+                $data['assignable']=array_column(array_filter($data['members'],fn($m)=>$m['enabled'] && in_array($m['role'],['owner','manager','developer'],true) && ($m['role']==='owner'||in_array((int)$m['id'],$data['projectMembers'],true))),'name','id');
+            }
             if (can($user,'connections')) {
-                $data['connections'] = connectionViews($db);
+                $data['connections'] = scopedConnections($db,$user,(int)$p['id']);
                 $data['links'] = query($db,'SELECT connection_key FROM project_connections WHERE project_id=? ORDER BY connection_key',[$p['id']])->fetchAll(PDO::FETCH_COLUMN);
             }
             break;
         case 'finance':
             $pageNo = numberId($_GET['n'] ?? 1);
             if ($pageNo > 10000000) throw new Problem('Некорректная страница.');
-            $rows = ledger($db,$_GET,($pageNo-1)*50)->fetchAll();
-            $data = ['rows'=>array_slice($rows,0,50),'more'=>count($rows)>50,'pageNo'=>$pageNo,'balances'=>balances($db,$_GET),'projects'=>$projectOptions(),'selected'=>$projectId,
+            $rows = ledger($db,$user,$_GET,($pageNo-1)*50)->fetchAll();
+            $data = ['rows'=>array_slice($rows,0,50),'more'=>count($rows)>50,'pageNo'=>$pageNo,'balances'=>balances($db,$user,$_GET),'projects'=>$projectOptions(),'selected'=>$projectId,
                 'filters'=>array_filter(['project'=>$projectId,'from'=>$_GET['from'] ?? null,'to'=>$_GET['to'] ?? null])];
             break;
-        case 'export': sendCsv($db);
+        case 'export': sendCsv($db,$user);
         case 'documents':
             $data['projects'] = $projectOptions();
             $data['selected'] = $projectId;
             $data['docs'] = query($db,'SELECT d.*,p.title project_title,MAX(v.revision) revision FROM documents d JOIN projects p ON d.project_id=p.id JOIN document_versions v ON v.document_id=d.id '.
-                ($projectId ? 'WHERE d.project_id=? ' : '').'GROUP BY d.id ORDER BY d.id DESC',$projectId?[$projectId]:[])->fetchAll();
+                "WHERE $scope ".($projectId ? 'AND d.project_id=? ' : '').'GROUP BY d.id,p.title ORDER BY d.id DESC',$projectId?[...$scopeArgs,$projectId]:$scopeArgs)->fetchAll();
             break;
         case 'document':
             $id = numberId($_GET['id'] ?? 0);
-            $data['doc'] = entity($db,'SELECT d.*,p.title project_title FROM documents d JOIN projects p ON d.project_id=p.id WHERE d.id=?',[$id]);
+            $data['doc'] = entity($db,"SELECT d.*,p.title project_title FROM documents d JOIN projects p ON d.project_id=p.id WHERE d.id=? AND $scope",[$id,...$scopeArgs]);
             $data['versions'] = query($db,'SELECT v.revision,v.sha256,v.created_at,length(v.bytes) size,u.name FROM document_versions v JOIN users u ON v.actor_id=u.id WHERE document_id=? ORDER BY revision DESC',[$id])->fetchAll();
             break;
         case 'download':
             $id = numberId($_GET['id'] ?? 0); $rev = numberId($_GET['v'] ?? 0);
-            $doc = entity($db,'SELECT bytes FROM document_versions WHERE document_id=? AND revision=?',[$id,$rev]);
+            $doc = entity($db,"SELECT ".(isPostgres($db)?"encode(v.bytes,'hex')":"v.bytes")." AS bytes FROM document_versions v JOIN documents d ON d.id=v.document_id JOIN projects p ON p.id=d.project_id WHERE v.document_id=? AND v.revision=? AND $scope",[$id,$rev,...$scopeArgs]);
+            if (isPostgres($db)) $doc['bytes']=hex2bin($doc['bytes']);
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="document-'.$id.'-v'.$rev.'.pdf"');
             header('Content-Length: '.strlen($doc['bytes']));
             echo $doc['bytes']; return;
         case 'connections':
             $report=profileReport($db);
-            $data=['items'=>$report['connections'],'stand'=>$report['stand'],'issues'=>$report['issues'],'instance'=>null,'checks'=>[],'nextBefore'=>null];
+            $visible=scopedConnections($db,$user);
+            $data=['items'=>array_intersect_key($report['connections'],$visible),'stand'=>($user['organization_id']===1 && $user['role']==='owner')?$report['stand']:['name'=>$user['organization_name'],'environment'=>'','owner'=>'','contact'=>'','notes'=>''],'issues'=>($user['organization_id']===1 && $user['role']==='owner' && (int)$db->query('SELECT COUNT(*) FROM organizations')->fetchColumn()===1)?$report['issues']:[],'instance'=>null,'checks'=>[],'nextBefore'=>null];
             if (isset($_GET['instance'])) {
                 $id=word($_GET['instance'],48,'Подключение');
                 if (!isset($data['items'][$id])) throw new Problem('Подключение не найдено.',404);
@@ -213,7 +264,15 @@ function dispatch(PDO $db, ?array $user, string $page): void {
                 $data['nextBefore']=count($rows)>50?(int)$rows[49]['id']:null;
             }
             break;
-        case 'team': $data['members'] = $db->query('SELECT name,email,role,enabled FROM users ORDER BY enabled DESC,name')->fetchAll(); break;
+        case 'team':
+            $data['members']=orgMembers($db,$user);
+            $data['teams']=query($db,'SELECT * FROM teams WHERE organization_id=? ORDER BY name',[$user['organization_id']])->fetchAll();
+            $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
+            if ($user['role']==='owner') {
+                $data['invitations']=query($db,'SELECT id,email,role,expires_at,accepted_at,revoked_at FROM invitations WHERE organization_id=? ORDER BY id DESC LIMIT 100',[$user['organization_id']])->fetchAll();
+                $data['inviteToken']=$_SESSION['invite_token']??null; unset($_SESSION['invite_token']);
+            }
+            break;
         default: throw new Problem('Страница не найдена.',404);
     }
     $title = match ($page) { 'project'=>$data['project']['title'], 'document'=>$data['doc']['title'], default=>PAGE_TITLES[$page] };

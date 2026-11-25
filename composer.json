@@ -6,9 +6,9 @@
   "require": {
     "php": ">=8.3 <9.0",
     "ext-pdo": "*",
-    "ext-pdo_sqlite": "*",
     "ext-curl": "*",
     "ext-session": "*"
   },
+  "suggest": {"ext-pdo_sqlite": "SQLite backend and source import", "ext-pdo_pgsql": "PostgreSQL 14+ backend and import"},
   "scripts": { "test": "@php tests/run.php" }
 }

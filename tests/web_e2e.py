@@ -290,6 +290,8 @@ def run(tmp):
         expect(project_url=="p=project&id=1","project persisted")
         expect(owner.call("?p=projects",form)[3]==project_page[3],"idempotent PRG")
         task_url="?"+project_url
+        for uid in range(2,7):
+            expect(owner.post(task_url,"project.add",member_id=uid)[0]==200,"grant explicit project membership")
         owner.post(task_url,"task.create",title="Release",assignee="4",due_on="2028-02-29")
         dev=users["developer"]
         task=fields(dev.call(task_url)[1],"task.state")|{"state":"doing"}

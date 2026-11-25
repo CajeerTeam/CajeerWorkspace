@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.1.2';
-const SCHEMA_VERSION = 3;
+const VERSION = '0.2.0';
+const SCHEMA_VERSION = 4;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -51,6 +51,12 @@ function dataDir(): string {
 
 function database(bool $install = false, bool $upgrade = false, ?string $backupPath = null, ?callable $onBackup = null): PDO {
     $db = openDatabase($install);
+    if (isPostgres($db)) {
+        if ($install || $upgrade) migratePostgres($db,$install);
+        if (schemaVersion($db)!==SCHEMA_VERSION) throw new Problem('Версия схемы PostgreSQL несовместима.',503);
+        validateLedger($db,SCHEMA_VERSION,migrationFiles($db));
+        return $db;
+    }
     if ($install || $upgrade) {
         // init is not an implicit upgrade for an existing installation.
         if ($upgrade || schemaVersion($db) === 0) migrateDatabase($db,$install,$backupPath,$onBackup);
@@ -64,17 +70,23 @@ function database(bool $install = false, bool $upgrade = false, ?string $backupP
 }
 
 function atomic(PDO $db, callable $work): mixed {
-    $db->exec('BEGIN IMMEDIATE');
+    if (isPostgres($db)) { $db->beginTransaction(); } else $db->exec('BEGIN IMMEDIATE');
     try {
+        if (isPostgres($db)) $db->query('SELECT pg_advisory_xact_lock(724009201)');
         $result = $work();
-        $db->exec('COMMIT');
+        if (isPostgres($db)) $db->commit(); else $db->exec('COMMIT');
         return $result;
     } catch (Throwable $e) {
-        $db->exec('ROLLBACK');
+        if (isPostgres($db)) { if ($db->inTransaction()) $db->rollBack(); } else $db->exec('ROLLBACK');
         throw $e;
     }
 }
 
+function isPostgres(PDO $db): bool { return $db->getAttribute(PDO::ATTR_DRIVER_NAME)==='pgsql'; }
+function insertId(PDO $db,string $sql,array $args): int {
+    if (isPostgres($db)) return (int)query($db,$sql.' RETURNING id',$args)->fetchColumn();
+    query($db,$sql,$args); return (int)$db->lastInsertId();
+}
 function query(PDO $db, string $sql, array $params = []): \PDOStatement {
     $statement = $db->prepare($sql);
     $statement->execute($params);
@@ -118,12 +130,23 @@ function calendarDate(mixed $value, bool $optional = false): ?string {
 
 function action(PDO $db, array $user, string $key, string $name, array $data, callable $write): int {
     if (!preg_match('/\A[a-f0-9]{32}\z/', $key)) throw new Problem('Обновите форму и повторите операцию.');
-    $digest = hash('sha256', json_encode([$name,$data], JSON_THROW_ON_ERROR));
+    $digest = hash('sha256', json_encode([$name,$user['organization_id']??1,$data], JSON_THROW_ON_ERROR));
     return atomic($db, static function () use ($db,$user,$key,$name,$digest,$write) {
+        $fresh=organizationUser($db,$user);
+        if ($fresh['role']!==$user['role']) throw new Problem('Полномочия изменились. Обновите страницу.',403);
         $old = query($db, 'SELECT fingerprint, object_id FROM action_log WHERE actor_id=? AND request_key=?', [$user['id'],$key])->fetch();
         if ($old) {
             if (!hash_equals($old['fingerprint'], $digest)) throw new Problem('Содержимое повторного запроса изменилось. Обновите форму.', 409);
-            return (int)$old['object_id'];
+            $id=(int)$old['object_id'];
+            $projectId=match($name) {
+                'project.create','connection.attach','connection.detach'=>$id,
+                'task.create','task.state'=>(int)entity($db,'SELECT project_id FROM tasks WHERE id=?',[$id])['project_id'],
+                'cash.post','cash.reverse'=>(int)entity($db,'SELECT project_id FROM cash_entries WHERE id=?',[$id])['project_id'],
+                'document.version'=>(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],
+                default=>throw new Problem('Неизвестная операция.',409)
+            };
+            allowedProject($db,$fresh,$projectId);
+            return $id;
         }
         $id = $write();
         query($db, 'INSERT INTO action_log(actor_id,request_key,fingerprint,action,object_id) VALUES(?,?,?,?,?)', [$user['id'],$key,$digest,$name,$id]);
@@ -160,8 +183,10 @@ function addUser(PDO $db, string $email, string $name, string $role, string $pas
     $args = [normalizedEmail($email),word($name,90,'Имя'),choice($role,ROLES),passwordHash($password)];
     atomic($db, static function () use ($db,$args,$first) {
         if ($first && (int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn()) throw new Problem('Пространство уже установлено. Для нового пользователя используйте user:add.');
-        if (query($db, 'SELECT 1 FROM users WHERE email=?', [$args[0]])->fetchColumn()) throw new Problem('Этот адрес уже зарегистрирован.');
-        query($db, 'INSERT INTO users(email,name,role,password_hash) VALUES(?,?,?,?)', $args);
+        if (query($db, 'SELECT 1 FROM users WHERE LOWER(email)=?', [$args[0]])->fetchColumn()) throw new Problem('Этот адрес уже зарегистрирован.');
+        
+        $id=insertId($db,'INSERT INTO users(email,name,role,password_hash) VALUES(?,?,?,?)',$args);
+        query($db,'INSERT INTO organization_members VALUES(1,?,?)',[$id,$args[2]]);
     });
 }
 
@@ -177,12 +202,12 @@ function authenticate(PDO $db, string $email, string $password, string $peer): ?
             query($db,'INSERT INTO login_attempts VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1',[$key,$now]);
         }
     });
-    $user = query($db,'SELECT * FROM users WHERE email=? AND enabled=1',[$email])->fetch();
+    $user = query($db,'SELECT * FROM users WHERE LOWER(email)=? AND enabled=1',[$email])->fetch();
     // Valid fixed hash gives an unknown email the same password verification path.
     $dummy = '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
     if (strlen($password) > 72 || str_contains($password, "\0") || !password_verify($password, $user['password_hash'] ?? $dummy) || !$user) return null;
     atomic($db, static function () use ($db,$keys) {
-        foreach ($keys as $key=>$limit) query($db,'UPDATE login_attempts SET attempts=MAX(0, attempts-1) WHERE bucket=?',[$key]);
+        foreach ($keys as $key=>$limit) query($db,'UPDATE login_attempts SET attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END WHERE bucket=?',[$key]);
     });
     return $user;
 }

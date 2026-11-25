@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = 'SHA256SUMS'
 # Explicit release inventory: no data, private configuration, VCS, secrets or build outputs.
 FILES = '''LICENSE README.md ROADMAP.md VERSION composer.json .gitignore
-app/Core.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
-bin/workspace config/connections.example.json docs/INTEGRATIONS.md docs/UPGRADE.md
+app/Core.php app/Organizations.php app/Postgres.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
+bin/workspace config/connections.example.json docs/INTEGRATIONS.md docs/UPGRADE.md docs/ORGANIZATIONS.md
 public/health.php public/index.php public/style.css
-views/connections.php views/document.php views/documents.php views/error.php views/finance.php views/frame.php views/login.php views/overview.php views/project.php views/projects.php views/team.php
-tools/release.py tests/integration_profiles.php tests/run.php tests/web_e2e.py tests/migrations.php tests/release.py .github/workflows/ci.yml'''.split()
+views/connections.php views/document.php views/documents.php views/error.php views/finance.php views/frame.php views/login.php views/overview.php views/invite.php views/search.php views/project.php views/projects.php views/team.php
+tools/release.py tests/integration_profiles.php tests/run.php tests/web_e2e.py tests/migrations.php tests/release.py tests/tenant_e2e.py tests/tenant_schema.py .github/workflows/ci.yml'''.split()
 VERSION_RE = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+')
 MAX_FILE = 32 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
@@ -66,7 +66,7 @@ def validate_payload(payload):
     n = int(schema.group(1))
     if not 1 <= n <= 999:
         raise ValueError('Invalid schema version')
-    expected = set(FILES) | {f'database/{i:03}.sql' for i in range(1, n + 1)}
+    expected = set(FILES) | {f'database/{i:03}.sql' for i in range(1, n + 1)} | {f'database/postgresql/{i:03}.sql' for i in range(1, n + 1)}
     if set(payload) != expected:
         raise ValueError('Unexpected or missing distribution files')
     return version
@@ -101,6 +101,9 @@ def build(out):
     payload = {name: read_source(name) for name in FILES}
     for path in sorted((ROOT / 'database').glob('*.sql')):
         name = 'database/' + path.name
+        payload[name] = read_source(name)
+    for path in sorted((ROOT / 'database/postgresql').glob('*.sql')):
+        name = 'database/postgresql/' + path.name
         payload[name] = read_source(name)
     version = validate_payload(payload)
     name = f'CajeerWorkspace-{version}.zip'

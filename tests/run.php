@@ -43,6 +43,7 @@ try {
     check(createProject($db,$manager,$key,$form)===$pid,'Повтор создания проекта');
     rejected(fn()=>createProject($db,$manager,$key,['title'=>'Другое']+$form),409,'Изменённое тело повтора');
     rejected(fn()=>createProject($db,$viewer,token(),$form),403,'Создание проекта наблюдателем');
+    foreach ([$developer,$accountant,$legal,$viewer] as $member) changeMembership($db,$manager,'project',$pid,(int)$member['id'],true);
     $tid=createTask($db,$manager,token(),$pid,['title'=>'Сборка','assignee'=>$developer['id'],'due_on'=>'2028-02-29']);
     changeTask($db,$developer,token(),$tid,1,'doing');
     rejected(fn()=>changeTask($db,$owner,token(),$tid,1,'done'),409,'Устаревшая задача');
@@ -55,14 +56,14 @@ try {
     check(recordCash($db,$accountant,$key,$pid,$cash)===$entry,'Повтор проведения');
     recordCash($db,$owner,token(),$pid,['amount'=>'0.20']+$cash);
     recordCash($db,$owner,token(),$pid,['amount'=>'7','currency'=>'PLN','direction'=>'expense']+$cash);
-    $totals=balances($db,[]);
+    $totals=balances($db,$owner,[]);
     check(count($totals)===2 && (int)$totals[0]['income']===30 && (int)$totals[1]['expense']===700,'Точная сумма и валюты');
-    check(!balances($db,['to'=>gmdate('Y-m-d',time()-86400)]),'Фильтр периода');
+    check(!balances($db,$owner,['to'=>gmdate('Y-m-d',time()-86400)]),'Фильтр периода');
     rejected(fn()=>recordCash($db,$manager,token(),$pid,$cash),403,'Доступ к кассе');
     rejected(fn()=>recordCash($db,$owner,token(),$pid,['amount'=>'1.001']+$cash),422,'Скрытая потеря точности');
     rejected(fn()=>moneyMinor('0.00'),422,'Нулевая сумма');
     $reversed=reverseCash($db,$owner,token(),$entry);
-    check((int)balances($db,[])[0]['income']===20,'Сторно уменьшило поступление');
+    check((int)balances($db,$owner,[])[0]['income']===20,'Сторно уменьшило поступление');
     rejected(fn()=>reverseCash($db,$owner,token(),$entry),409,'Повторное сторно');
     rejected(fn()=>reverseCash($db,$owner,token(),$reversed),409,'Сторно корректировки');
     check(csvText('=123')==="'=123" && money(10,false)==='0,10','Формат CSV');
