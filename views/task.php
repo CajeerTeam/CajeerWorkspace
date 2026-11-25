@@ -2,6 +2,7 @@
 $t=$task; $id=(int)$t['id']; $pid=(int)$t['project_id']; $taskDetail=true;
 $manage=roleAllows($projectRole,'manage') && $t['milestone_state']!=='closed'; ?>
 <p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($t['project_title']) ?></a></p>
+<?php if(roleAllows($projectRole,'connections')): ?><p><a href="<?= h(url('forum',['project'=>$pid,'kind'=>'task','target'=>$id])) ?>">Обсуждение задачи в Forum</a></p><?php endif ?>
 <section class="panel inset"><h2>Задача #<?= $id ?></h2>
 <p><strong><?= h(PRIORITIES[$t['priority']]) ?></strong> · <?= h(STATES[$t['state']]) ?> · <?= h($t['assignee']??'Не назначен') ?> · срок <?= h(displayDate($t['due_on'])) ?></p>
 <p>Веха: <?= h($t['milestone_title']??'Не назначена') ?><?= $t['milestone_state']==='closed'?' · Закрыта':'' ?></p>

@@ -1,4 +1,5 @@
 <?php namespace Workspace; ?>
+<?php if(($user['nav_rights']['connections']??false)): ?><p><a href="<?= h(url('forum')) ?>">Лента и поиск обсуждений Forum (проверка доступа в реальном времени)</a></p><?php endif ?>
 <div class="overviewhead"><p class="lede">В начале очереди — ваши задачи. Ближайшие сроки идут первыми.</p><?php if (can($user,'manage')): ?><a class="button primary" href="<?= h(url('projects',['new'=>1])) ?>#new">Создать проект</a><?php endif ?></div>
 <div class="stats">
 <?php foreach ([['Проекты',$counts['projects']],['Открытые задачи',$counts['active']],['Завершённые задачи',$counts['done']]] as [$label,$count]): ?><div class="stat"><span><?= h($label) ?></span><strong><?= (int)$count ?></strong></div><?php endforeach ?>

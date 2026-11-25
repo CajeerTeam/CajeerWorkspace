@@ -21,7 +21,9 @@
     "base_url": null,
     "launch_url": null,
     "owner": "",
-    "installed_version": null
+    "installed_version": null,
+    "version_path": "/api/v1/health",
+    "version_field": "edition_version"
   },
   "book": {
     "base_url": null,

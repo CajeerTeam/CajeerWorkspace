@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,17 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'forum.bind':
+            $pid=$projectId();$sid=forumBind($db,$user,$pid,word($_POST['connection']??'',48,'Подключение'),forumId($_POST['board']??null));go('forum',['project'=>$pid,'source'=>$sid]);
+        case 'forum.toggle':
+            $pid=$projectId();forumToggle($db,$user,$pid,numberId($_POST['source_id']??0),choice($_POST['active']??'', ['0'=>'off','1'=>'on'])==='1');go('forum',['project'=>$pid]);
+        case 'forum.attach': case 'forum.create':
+            $pid=$projectId();$sid=numberId($_POST['source_id']??0);$kind=choice($_POST['kind']??'', ['task'=>'task','release'=>'release']);$target=numberId($_POST['target']??0);
+            $topic=$act==='forum.attach'?forumAttach($db,$user,$pid,$sid,$kind,$target,forumId($_POST['thread']??null)):forumCreate($db,$user,$pid,$sid,$kind,$target,$key,word($_POST['title']??'',180,'Название'),forumBody($_POST['body']??null));go('forum',['project'=>$pid,'source'=>$sid,'topic'=>$topic]);
+        case 'forum.action': case 'forum.reconcile':
+            $pid=$projectId();$sid=numberId($_POST['source_id']??0);$topic=numberId($_POST['topic_id']??0);
+            if($act==='forum.reconcile')forumReconcile($db,$user,$pid,$sid,$topic);else forumAction($db,$user,$pid,$sid,$topic,$key,word($_POST['operation']??'',16,'Операция'),$_POST);
+            go('forum',['project'=>$pid,'source'=>$sid,'topic'=>$topic,'n'=>numberId($_POST['page']??1)]);
         case 'book.bind':
             $pid=$projectId();$id=bookBind($db,$user,$pid,word($_POST['connection']??'',48,'Подключение'),bookScope($_POST['scope']??null),word($_POST['name']??'',120,'Книга'));go('book',['project'=>$pid,'source'=>$id]);
         case 'book.toggle':
@@ -399,6 +410,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'forum':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=forumPage($db,$user,$projectId,$_GET);break;
         case 'book':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=bookPage($db,$user,$projectId,$_GET);break;
         case 'book.export':
