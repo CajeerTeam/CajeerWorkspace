@@ -11,6 +11,10 @@ try {
     $db = database();
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $page=word($_GET['p']??'overview',32,'Страница');
+    if ($page==='sign.webhook') {
+        if ($method!=='POST') { header('Allow: POST'); throw new Problem('Метод не поддерживается.',405); }
+        signWebhook($db);
+    }
     if ($page==='github.webhook') {
         if ($method!=='POST') { header('Allow: POST'); throw new Problem('Метод не поддерживается.',405); }
         ghWebhook($db);

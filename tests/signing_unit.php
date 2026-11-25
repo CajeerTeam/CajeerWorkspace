@@ -1,0 +1,6 @@
+<?php
+declare(strict_types=1);namespace Workspace;
+require dirname(__DIR__).'/app/bootstrap.php';
+$n=0;function ok(bool $v):void{if(!$v)throw new \RuntimeException('Assertion failed');++$GLOBALS['n'];}function reject(callable $f):void{try{$f();}catch(Problem $e){ok(true);return;}throw new \RuntimeException('Expected rejection');}
+$key=str_repeat('k',40);$t='1234567890';$type='signature_request_signed';$raw=signJson(['event'=>['event_time'=>$t,'event_type'=>$type,'event_hash'=>hash_hmac('sha256',$t.$type,$key)]]);$sig=base64_encode(hash_hmac('sha256',$raw,$key));ok(signCallbackVerify($raw,$sig,$key)['event']['event_type']===$type);reject(fn()=>signCallbackVerify($raw.' ',$sig,$key));reject(fn()=>signCallbackVerify($raw,base64_encode(hash_hmac('sha256',$raw,$key,true)),$key));$bad=str_replace($type,'signature_request_all_signed',$raw);reject(fn()=>signCallbackVerify($bad,base64_encode(hash_hmac('sha256',$bad,$key)),$key));reject(fn()=>signId('../send'));reject(fn()=>signPdf('not a PDF'));ok(signPdf('%PDF-1.4 %%EOF')==='%PDF-1.4 %%EOF');
+$f=['name1'=>'A','email1'=>'a@example.test','name2'=>'B','email2'=>'b@example.test'];ok(count(signSigners($f))===2);reject(fn()=>signSigners(['email2'=>'A@example.test']+$f));reject(fn()=>signSigners(['email1'=>'bad']+$f));ok(sensitiveAction('sign.create'));echo "OK · $n проверок Dropbox Sign\n";

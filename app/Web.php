@@ -5,8 +5,8 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты'];
-const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив'];
+const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal'];
 
 function h(mixed $value): string {
     return htmlspecialchars((string)$value,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
@@ -149,6 +149,11 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'sign.create':
+            $pid=$projectId();$id=signCreate($db,$user,$pid,$key,$_POST,signConfig());$_SESSION['notice']='Пакет поставлен в очередь.';go('signing',['project'=>$pid,'id'=>$id]);
+        case 'sign.cancel': case 'sign.sync': case 'sign.adopt':
+            $pid=$projectId();$id=numberId($_POST['id']??0);orgOwner($db,$user);signGet($db,$user,$pid,$id);
+            if($act==='sign.cancel')signCancel($db,$user,$pid,$id);else { $cfg=signConfig(); if($cfg['org']!==(int)$user['organization_id'])throw new Problem('Провайдер не подключён.',403); $result=signProcess($db,$id,$cfg,$act==='sign.adopt'?'adopt':'sync',$act==='sign.adopt'?signId($_POST['remote_id']??null):null);$_SESSION['notice']=SIGN_STATES[$result]; }go('signing',['project'=>$pid,'id'=>$id]);
         case 'prep.template': case 'prep.create': case 'prep.revise': case 'prep.assign': case 'prep.submit': case 'prep.legal': case 'prep.approve': case 'prep.return': case 'prep.cancel':
             $pid=$projectId();$id=prepCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Операция сохранена.';go('preparation',$act==='prep.template'?['project'=>$pid]:['project'=>$pid,'id'=>$id]);
         case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
@@ -367,6 +372,10 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'signing':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=signPage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['before']??''));break;
+        case 'sign.download':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);signDownload($db,$user,numberId($projectId),numberId($_GET['id']??0),word($_GET['kind']??'',32,'Файл'));
         case 'preparation':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
             $data=prepPage($db,$user,$projectId,optionalId($_GET['id']??''),optionalId($_GET['compare']??''),optionalId($_GET['before']??''));break;

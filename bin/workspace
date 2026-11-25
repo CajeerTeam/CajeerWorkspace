@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.6.1
+CajeerWorkspace PHP 0.6.2
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -61,6 +61,7 @@ CajeerWorkspace PHP 0.6.1
   php bin/workspace deploy:tick SITE_ID
   php bin/workspace deploy:work DEPLOYMENT_ID
   php bin/workspace deploy:recover DEPLOYMENT_ID
+  php bin/workspace sign:tick [LIMIT]
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -131,6 +132,8 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'sign:tick':
+            if($argc>3)throw new Problem('Формат: sign:tick [LIMIT]');echo signJson(signTick($db,signConfig(),$argc===3?numberId($argv[2]):10)),PHP_EOL;break;
         case 'deploy:target':
             if($argc!==3)throw new Problem('Формат: deploy:target SITE_ID');
             $site=entity($db,'SELECT * FROM infra_sites WHERE id=?',[numberId($argv[2])]);
