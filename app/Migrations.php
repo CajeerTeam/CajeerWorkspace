@@ -72,6 +72,16 @@ function migrationFiles(?PDO $db=null): array {
     }
     ksort($files,SORT_NUMERIC);
     if (array_keys($files)!==range(1,SCHEMA_VERSION)) throw new Problem('Набор миграций не соответствует версии схемы.',503);
+    // The candidate freezes both dialects independently of the mutable DB ledger.
+    $rawFreeze=@file_get_contents(ROOT.'/database/schema-freeze.json');
+    if ($rawFreeze===false || !hash_equals('053277202fd1265ee1c375399869ea18982f66d80ab00591562104c839824054',hash('sha256',$rawFreeze))) throw new Problem('Контрольная сумма заморозки схемы не совпадает.',503);
+    $freeze=json_decode($rawFreeze,true);
+    if (!is_array($freeze) || ($freeze['schema']??null)!==SCHEMA_VERSION || !is_array($freeze['migrations']??null) || count($freeze['migrations'])!==2*SCHEMA_VERSION) throw new Problem('Нарушена заморозка схемы.',503);
+    $prefix='database/'.($db && isPostgres($db)?'postgresql/':'');
+    foreach ($files as $v=>$file) {
+        $expected=$freeze['migrations'][$prefix.sprintf('%03d',$v).'.sql']??null;
+        if (!is_string($expected)||!hash_equals($expected,$file['sha256'])) throw new Problem('Изменена замороженная миграция '.$v.'.',503);
+    }
     return $files;
 }
 

@@ -8,7 +8,7 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 const SCHEMA_VERSION = 33;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
@@ -183,10 +183,9 @@ function moneyMinor(mixed $value): int {
 }
 
 function money(int $minor, bool $group = true): string {
-    $absolute = abs($minor);
-    $whole = (string)intdiv($absolute, 100);
+    $whole = (string)abs(intdiv($minor, 100));
     if ($group) $whole = preg_replace('/\B(?=(\d{3})+(?!\d))/', ' ', $whole);
-    return ($minor < 0 ? '-' : '') . $whole . ',' . str_pad((string)($absolute % 100), 2, '0', STR_PAD_LEFT);
+    return ($minor < 0 ? '-' : '') . $whole . ',' . str_pad((string)abs($minor % 100), 2, '0', STR_PAD_LEFT);
 }
 
 function normalizedEmail(mixed $raw): string {

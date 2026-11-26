@@ -2,6 +2,7 @@
 """Build and verify a deterministic Workspace distribution; no third-party packages."""
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -13,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = 'SHA256SUMS'
 # Explicit release inventory: no data, private configuration, VCS, secrets or build outputs.
-FILES = '''LICENSE README.md ROADMAP.md VERSION composer.json .gitignore
+FILES = '''LICENSE README.md ROADMAP.md VERSION composer.json .gitignore database/schema-freeze.json docs/CANDIDATE.md tools/candidate.py tests/candidate.py tests/candidate_unit.php
 app/Recovery.php app/Pilot.php app/Reliability.php app/Discovery.php app/Incidents.php app/Bots.php app/Logs.php app/Editorial.php app/Lite.php app/LiteWorker.php app/Forum.php app/Book.php app/Engine.php app/Core.php app/Contracts.php app/Preparation.php app/Signing.php app/Retention.php app/TaxUk.php app/Economics.php app/Banking.php app/Accounting.php app/Invoices.php app/Deployments.php app/Infrastructure.php app/Releases.php app/GitHub.php app/Oss.php app/Clients.php app/Workload.php app/Planning.php app/Oidc.php app/Auth.php app/Permissions.php app/Payments.php app/Organizations.php app/Postgres.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
 bin/workspace config/connections.example.json docs/RECOVERY.md docs/PILOT.md docs/INTEGRATIONS.md docs/UPGRADE.md docs/ORGANIZATIONS.md docs/PERMISSIONS.md docs/AUTHENTICATION.md docs/PLANNING.md docs/WORKLOAD.md docs/CLIENTS.md docs/OSS.md docs/GITHUB.md docs/RELEASES.md docs/INFRASTRUCTURE.md docs/DEPLOYMENTS.md docs/INVOICES.md docs/ACCOUNTING.md docs/BANKING.md docs/ECONOMICS.md docs/UK_VAT.md docs/CONTRACTS.md docs/PREPARATION.md docs/SIGNING.md docs/RETENTION.md docs/ENGINE.md docs/BOOK.md docs/FORUM.md docs/LITE.md docs/EDITORIAL.md docs/LOGS.md docs/BOTS.md docs/RELIABILITY.md docs/DISCOVERY.md docs/INCIDENTS.md integrations/cajeerbots-1.0.2-workspace.patch
 public/health.php public/index.php public/style.css
@@ -69,6 +70,12 @@ def validate_payload(payload):
     expected = set(FILES) | {f'database/{i:03}.sql' for i in range(1, n + 1)} | {f'database/postgresql/{i:03}.sql' for i in range(1, n + 1)}
     if set(payload) != expected:
         raise ValueError('Unexpected or missing distribution files')
+    if sha(payload["database/schema-freeze.json"]) != "053277202fd1265ee1c375399869ea18982f66d80ab00591562104c839824054":
+        raise ValueError("Frozen schema manifest changed")
+    freeze = json.loads(payload["database/schema-freeze.json"])
+    migrations = {name: sha(data) for name, data in payload.items() if name.startswith("database/") and name.endswith(".sql")}
+    if freeze != {"schema": n, "migrations": migrations}:
+        raise ValueError("Frozen schema mismatch")
     return version
 
 
