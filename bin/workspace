@@ -39,6 +39,7 @@ CajeerWorkspace PHP $version
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
   php bin/workspace auth:check
+  php bin/workspace auth:acceptance
   php bin/workspace auth:policy
   php bin/workspace auth:bind EMAIL SUBJECT
   php bin/workspace auth:unbind EMAIL  (подтверждение локального пароля через stdin)
@@ -125,12 +126,11 @@ try {
         echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
         exit($report['ok']?0:1);
     }
-    if ($command==='auth:check') {
-        if ($argc!==2) throw new Problem('Формат: auth:check');
-        authKey();
-        if (oidcEnabled()) { $cfg=oidcConfig(); oidcDiscovery(); echo json_encode(['mode'=>installationAuthPolicy(),'issuer'=>ID_ISSUER,'redirect_uri'=>$cfg['callback'],'post_logout_redirect_uri'=>$cfg['logout'],'mfa_key'=>'configured'],JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT),PHP_EOL; }
-        else echo json_encode(['mode'=>installationAuthPolicy(),'mfa_key'=>'configured'],JSON_THROW_ON_ERROR),PHP_EOL;
-        exit(0);
+    if (in_array($command,['auth:check','auth:acceptance'],true)) {
+        if ($argc!==2) throw new Problem('Формат: '.$command);
+        $report=authDiagnostic($command==='auth:acceptance');
+        echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
+        exit($report['ok']?0:1);
     }
     if ($command==='postgres:import') {
         if ($argc!==3) throw new Problem('Формат: postgres:import /абсолютный/путь/к/копии.sqlite');

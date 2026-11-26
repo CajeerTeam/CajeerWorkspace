@@ -139,6 +139,7 @@ function handlePost(PDO $db, ?array $user): never {
         $handle=bin2hex(random_bytes(32));
         atomic($db,fn()=>staffSessionCreate($db,$u,$kind,$handle));
         $_SESSION += ['staff_handle'=>$handle,'uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>$kind,'org'=>$org];
+        if ($kind==='emergency') { try { $_SESSION['auth_evidence_pending']=['config'=>authConfigFingerprint()]; } catch (\Throwable) {} }
         go($kind==='emergency'?'security':'overview');
     }
     if ($act==='invite.accept') {

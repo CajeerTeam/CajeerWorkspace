@@ -40,6 +40,7 @@ try {
     }
     if ($method === 'POST') handlePost($db,$user);
     if ($method !== 'GET' && $method !== 'HEAD') { header('Allow: GET, HEAD, POST'); throw new Problem('Метод не поддерживается.',405); }
+    if ($method==='GET') observeAuthRequest($db,$user,$page);
     dispatch($db,$user,$page);
 } catch (Problem $e) {
     http_response_code($e->status);

@@ -46,13 +46,15 @@ function oidcHttp(string $url,?array $form=null): array {
 function oidcDiscovery(): array {
     static $d=null;
     if ($d!==null) return $d;
-    $candidate=oidcHttp(ID_ISSUER.'/.well-known/openid-configuration');
+    return $d=validateOidcDiscovery(oidcHttp(ID_ISSUER.'/.well-known/openid-configuration'));
+}
+function validateOidcDiscovery(array $candidate): array {
     if (($candidate['issuer']??null)!==ID_ISSUER) throw new Problem('Issuer не совпадает.',503);
     foreach (['authorization_endpoint','token_endpoint','jwks_uri','introspection_endpoint','end_session_endpoint'] as $key) {
         if (!is_string($candidate[$key]??null)) throw new Problem('Неполная конфигурация SkiF4er ID.',503);
         oidcEndpoint($candidate[$key]);
     }
-    return $d=$candidate;
+    return $candidate;
 }
 function der(string $tag,string $value): string {
     $n=strlen($value); $len=$n<128?chr($n):ltrim(pack('N',$n),"\0");

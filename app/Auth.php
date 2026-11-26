@@ -196,7 +196,7 @@ function oidcCallback(PDO $db,?array $current=null): never {
         return $p;
     });
     if ($principal===null) { killLogin(); $_SESSION['notice']='SkiF4er ID привязан. Войдите заново.'; go('login'); }
-    killLogin(); $_SESSION+=['auth_kind'=>'oidc','oidc_handle'=>$handle,'oidc_tokens'=>$tokens,'born'=>time(),'seen'=>time()];
+    killLogin(); try { $_SESSION['auth_evidence_pending']=['config'=>authConfigFingerprint(),'invite'=>$tx['guest']!==null]; } catch (\Throwable) {}  $_SESSION+=['auth_kind'=>'oidc','oidc_handle'=>$handle,'oidc_tokens'=>$tokens,'born'=>time(),'seen'=>time()];
     if ($principal['user']) { $_SESSION['staff_handle']=$handle; $_SESSION['uid']=(int)$principal['user']['id']; $_SESSION['v']=(int)$principal['user']['session_version']; if (isset($principal['organization'])) $_SESSION['org']=$principal['organization']; go('overview'); }
     $_SESSION['guest_id']=$principal['guest']; go('guest');
 }
@@ -209,7 +209,12 @@ function validateOidcSession(PDO $db): bool {
 }
 function authLogout(PDO $db): never {
     $kind=$_SESSION['auth_kind']??null; $id=$_SESSION['oidc_tokens']['id']??null;
-    try { if (staffHandle()!==null && !empty($_SESSION['uid'])) staffSessionEnd($db,staffHandle(),(int)$_SESSION['uid']); if (is_string($_SESSION['oidc_handle']??null)) query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE handle=? AND revoked_at IS NULL',[time(),hash('sha256',$_SESSION['oidc_handle'])]); } finally { killLogin(); }
+    try { atomic($db,function() use($db) {
+        $handle=is_string($_SESSION['oidc_handle']??null)?hash('sha256',$_SESSION['oidc_handle']):null;
+        if ($handle!==null && query($db,'SELECT 1 FROM oidc_sessions WHERE handle=? AND revoked_at IS NULL AND expires_at>?',[$handle,time()])->fetchColumn()) observeAuthEndSafely($db,$handle,'logout');
+        if (staffHandle()!==null && !empty($_SESSION['uid'])) staffSessionEnd($db,staffHandle(),(int)$_SESSION['uid']);
+        if ($handle!==null) query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE handle=? AND revoked_at IS NULL',[time(),$handle]);
+    }); } finally { killLogin(); }
     if ($kind==='oidc'&&is_string($id)&&oidcEnabled()) {
         try { $d=oidcDiscovery(); $cfg=oidcConfig(); header('Location: '.$d['end_session_endpoint'].'?'.http_build_query(['id_token_hint'=>$id,'client_id'=>$cfg['id'],'post_logout_redirect_uri'=>$cfg['logout']],'','&',PHP_QUERY_RFC3986),true,303); exit; } catch (\Throwable) {}
     }
@@ -230,6 +235,7 @@ function applyBackchannelLogout(PDO $db,array $claims): void {
         $where='issuer=? AND revoked_at IS NULL'; $args=[ID_ISSUER];
         if (isset($claims['sid'])) { $where.=' AND sid=?'; $args[]=$claims['sid']; } else { $where.=' AND created_at<=?'; $args[]=$claims['iat']; }
         if (isset($claims['sub'])) { $where.=' AND subject=?'; $args[]=$claims['sub']; }
+        foreach (query($db,"SELECT handle FROM oidc_sessions WHERE $where AND expires_at>?",[...$args,time()])->fetchAll() as $r) observeAuthEndSafely($db,$r['handle'],'backchannel');
         query($db,"UPDATE oidc_sessions SET revoked_at=? WHERE $where",[time(),...$args]);
         query($db,"UPDATE staff_sessions SET revoked_at=? WHERE kind='oidc' AND revoked_at IS NULL AND handle IN (SELECT handle FROM oidc_sessions WHERE revoked_at IS NOT NULL)",[time()]);
     });

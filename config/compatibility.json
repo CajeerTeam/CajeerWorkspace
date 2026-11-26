@@ -1,11 +1,11 @@
 {
-  "version": "1.1.1",
-  "schema": 35,
+  "version": "1.1.2",
+  "schema": 36,
   "authentication": {"installation_modes": ["local", "mixed", "required"], "organization_modes": ["inherit", "required"], "legacy_default": "preserve"},
   "runtime": {"php_ci": ["8.3", "8.4", "8.5"], "php_min": "8.3", "sqlite_min": "3.27.0", "postgres_min": "14", "postgres_ci": ["14", "16"], "python_min": "3.9", "architecture": 64},
   "integrations": {
     "engine": {"version": "2.1.0", "capabilities": ["content_revision", "publish", "reconcile"], "owner_role": "team_lead"},
-    "logs": {"version": "1.1.0", "capabilities": ["ingest", "correlation_search", "retention", "reconcile"], "owner_role": "on_call"},
+    "logs": {"version": "1.1.1", "capabilities": ["ingest", "correlation_search", "retention", "reconcile"], "owner_role": "on_call"},
     "forum": {"version": "1.6.0", "capabilities": ["board_acl", "thread", "moderation", "reconcile"], "owner_role": "team_lead"},
     "book": {"version": "1.2.0", "capabilities": ["public_reader", "immutable_snapshot", "review"], "owner_role": "team_lead"},
     "lite": {"version": "1.6.0", "capabilities": ["native_publish", "backup_restore", "revision_conflict"], "owner_role": "on_call"},
