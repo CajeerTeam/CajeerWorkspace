@@ -8,7 +8,7 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 const SCHEMA_VERSION = 33;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
@@ -49,7 +49,9 @@ function dataDir(): string {
     return $dir;
 }
 
-function database(bool $install = false, bool $upgrade = false, ?string $backupPath = null, ?callable $onBackup = null): PDO {
+function database(bool $install = false, bool $upgrade = false, ?string $backupPath = null, ?callable $onBackup = null, bool $recovery = false): PDO {
+    $guard=(getenv('WORKSPACE_DATA')?:ROOT.'/var').'/recovery.lock';
+    if ((file_exists($guard)||is_link($guard)) && !($recovery && PHP_SAPI==='cli' && getenv('WORKSPACE_RECOVERY_OFFLINE')==='1')) throw new Problem('Восстановленная площадка в карантине. Проверьте восстановление и внешние очереди.',503);
     $db = openDatabase($install);
     if (isPostgres($db)) {
         if ($install || $upgrade) migratePostgres($db,$install);

@@ -20,6 +20,9 @@ jobs:
       - run: php bin/workspace doctor
       - run: php tests/integration_profiles.php
       - run: php tests/pilot_db.php
+      - run: python3 tests/recovery.py
+      - run: php tests/recovery_db.php
+      - run: python3 tests/recovery_http.py
       - run: php tests/run.php
       - run: python3 tests/web_e2e.py
       - run: php tests/migrations.php
@@ -259,3 +262,37 @@ jobs:
           pnpm build
           pnpm typecheck
           pnpm exec vitest run packages/db/src/workspace-delivery.spec.ts apps/api/src/modules/bot-runtime/workspace-delivery.spec.ts apps/worker/src/workers/workspace-delivery.spec.ts
+
+  recovery-postgres:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_DB: workspace_recovery_src
+          POSTGRES_USER: workspace
+          POSTGRES_PASSWORD: ci-disposable-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workspace -d workspace_recovery_src"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGDATABASE: workspace_recovery_src
+      PGUSER: workspace
+      PGPASSWORD: ci-disposable-password
+      PGSSLMODE: disable
+      WORKSPACE_RECOVERY_CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_pgsql, curl, openssl
+          coverage: none
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - run: PATH="/usr/lib/postgresql/16/bin:$PATH" python3 tests/recovery_pg.py '${{ job.services.db.id }}'

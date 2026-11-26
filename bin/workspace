@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.9.0
+CajeerWorkspace PHP 0.9.1
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -82,6 +82,11 @@ CajeerWorkspace PHP 0.9.0
   php bin/workspace pilot:guest OWNER_ID DOCUMENT_ID REVISION HOURS [ORDER_ID] < email.txt
   php bin/workspace pilot:check OWNER_ID
   php bin/workspace pilot:probe OWNER_ID
+  php bin/workspace recovery:mfa-rotate < new-key.txt
+  php bin/workspace recovery:mfa-check
+  php bin/workspace recovery:inspect-pg
+  php bin/workspace recovery:pg-empty
+  php bin/workspace recovery:release-quarantine MANIFEST_SHA256 --reviewed
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -94,6 +99,15 @@ try {
     $command = $argv[1] ?? 'help';
     if ($command === 'help' || $command === '--help') { echo helpText(); exit(0); }
     if ($command === 'version') { echo VERSION,PHP_EOL; exit(0); }
+    if (in_array($command,['recovery:mfa-rotate','recovery:mfa-check','recovery:inspect-pg','recovery:pg-empty','recovery:release-quarantine'],true)) {
+        recoveryOffline();if($command==='recovery:release-quarantine'){if($argc!==4||$argv[3]!=='--reviewed')throw new Problem('Требуется MANIFEST_SHA256 --reviewed.');$db=database(recovery:true);recoveryRelease($db,$argv[2]);echo "OK\n";exit(0);}if($argc!==2)throw new Problem('Не передавайте ключи и параметры в аргументах CLI.');
+        if($command==='recovery:pg-empty'){if(!postgresSelected())throw new Problem('Требуется PostgreSQL.');postgresEmpty(postgresConnect());echo "OK\n";exit(0);}
+        $db=database(recovery:true);
+        if($command==='recovery:mfa-rotate'){$raw=stream_get_contents(STDIN,128);if($raw===false||!feof(STDIN))throw new Problem('Передайте только новый hex-ключ через stdin.');$result=recoveryMfaRotate($db,rtrim($raw,"\r\n"));}
+        elseif($command==='recovery:mfa-check')$result=['credentials_verified'=>recoveryMfaCheck($db)];
+        else $result=recoveryPgInspect($db);
+        echo json_encode($result,JSON_THROW_ON_ERROR|JSON_PRETTY_PRINT),PHP_EOL;exit(0);
+    }
     if ($command === 'init') {
         if ($argc !== 4) throw new Problem('Формат: init EMAIL "Имя"');
         $db = database(true);
