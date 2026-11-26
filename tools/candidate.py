@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '0.9.1', '0.9.2'
+OLD, NEW = '0.9.2', '1.0.0'
 SCHEMA = 33
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
@@ -126,10 +126,12 @@ def set_pointer(root, version):
         recovery.fsync_dir(root)
 
 
-def prepare(root, previous, previous_sha, candidate, signature, public_key, key_sha):
+def prepare(root, previous, previous_sha, candidate, signature, public_key, key_sha, expected_candidate_sha=None):
     require(recovery.HEX.fullmatch(previous_sha) and recovery.digest(previous)==previous_sha, 'Untrusted previous release')
     verify_signature(candidate, signature, public_key, key_sha)
     candidate_sha = recovery.digest(candidate)
+    if expected_candidate_sha is not None:
+        require(candidate_sha == expected_candidate_sha, "Candidate differs from accepted package")
     old, new = archive_payload(previous, OLD), archive_payload(candidate, NEW)
     require(recovery.digest(candidate)==candidate_sha, "Candidate changed during inspection")
     root = recovery.new_directory(root)
@@ -207,7 +209,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         verify_trees(root)
         active = pointer(root)
         m, _, _ = recovery.verify(backup,backup_sha)
-        require(m['version']==OLD and m['snapshot']['schema']==SCHEMA,'Requires verified pre-upgrade 0.9.1 backup')
+        require(m['version']==OLD and m['snapshot']['schema']==SCHEMA,'Requires verified pre-upgrade 0.9.2 backup')
         backend=m['backend']
         require((os.environ.get('WORKSPACE_DB') or 'sqlite')==backend,'Database backend mismatch')
         env=dict(os.environ,WORKSPACE_DATA=str(data),WORKSPACE_OBJECT_DIR=str(objects),WORKSPACE_DB=backend)
