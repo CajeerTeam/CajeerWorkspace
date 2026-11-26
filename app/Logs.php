@@ -145,7 +145,7 @@ function logsProjectRows(PDO $db,array $u,int $project,array $args,?callable $tr
   if(($f['environment']!==''&&$env!==$f['environment'])||($f['release']!==null&&$rel!==$f['release'])||($f['trace']!==''&&$trace!==$f['trace'])||($f['level']!==''&&LOG_EVENTS[$event]!==$f['level']))continue;
   // Cross-check against our own authoritative release ID (no foreign object references in UI).
   if($rel!==null&&!query($db,'SELECT 1 FROM project_releases WHERE id=? AND project_id=?',[$rel,$project])->fetchColumn())continue;
-  $safe[]=['timestamp'=>gmdate('Y-m-d H:i:s',$t),'event'=>$event,'level'=>LOG_EVENTS[$event],'object_id'=>$obj,'environment'=>$env,'release_id'=>$rel,'host_id'=>$host,'correlation_id'=>$trace];
+  $safe[]=['timestamp'=>gmdate('Y-m-d H:i:s',$t),'event'=>$event,'level'=>LOG_EVENTS[$event],'object_id'=>$obj,'environment'=>$env,'release_id'=>$rel,'host_id'=>$host,'correlation_id'=>$trace,'request_id'=>$key];
  }
  // Recheck authorization after HTTP. Fail closed on disabled/changed binding or tightened retention.
  requireProjectRight($db,$u,$project,'connections');$fresh=logsBinding($db,$project);if(!$fresh||!(int)$fresh['active']||$fresh['identity_hash']!==$b['identity_hash']||(int)$fresh['retention_days']!==(int)$b['retention_days'])throw new Problem('Привязка Logs изменилась.',409);

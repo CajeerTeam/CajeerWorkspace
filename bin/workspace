@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.8.1
+CajeerWorkspace PHP 0.8.2
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -71,6 +71,7 @@ CajeerWorkspace PHP 0.8.1
   php bin/workspace lite:reconcile JOB_ID [--offline]
   php bin/workspace bots:tick [LIMIT]
   php bin/workspace logs:tick [LIMIT]
+  php bin/workspace incidents:scan PROJECT_ID OWNER_ID
   php bin/workspace logs:prune
   php bin/workspace version
 
@@ -146,6 +147,9 @@ try {
             if($argc>3)throw new Problem('Формат: bots:tick [LIMIT]');echo json_encode(botsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'logs:tick':
             if($argc>3)throw new Problem('Формат: logs:tick [LIMIT]');echo json_encode(logsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
+        case 'incidents:scan':
+            if($argc!==4)throw new Problem('Формат: incidents:scan PROJECT_ID OWNER_ID');
+            $pid=numberId($argv[2]);$p=entity($db,'SELECT organization_id FROM projects WHERE id=?',[$pid]);$actor=orgOwner($db,organizationUser($db,['id'=>numberId($argv[3])],(int)$p['organization_id']));$result=incidentScan($db,$actor,$pid);echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),PHP_EOL;exit($result['errors']||$result['logs_truncated']?1:0);
         case 'logs:prune':
             if($argc!==2)throw new Problem('Формат: logs:prune');echo json_encode(['pruned'=>logsPrune($db)],JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'lite:inspect': case 'lite:work': case 'lite:restore': case 'lite:reconcile':

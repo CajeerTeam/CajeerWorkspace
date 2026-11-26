@@ -95,6 +95,8 @@ jobs:
       - run: php tests/logs_db.php
       - run: python3 tests/bots_schema.py
       - run: php tests/bots_db.php
+      - run: python3 tests/incidents_schema.py
+      - run: php tests/incidents_db.php
       - if: matrix.php == '8.4'
         uses: actions/checkout@v4
         with:
@@ -130,7 +132,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs', 'bots']
+        suite: ['tenant', 'permissions', 'auth', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs', 'bots', 'incidents']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -213,6 +215,8 @@ jobs:
         run: php tests/logs_db.php --postgres
       - if: matrix.suite == 'bots'
         run: php tests/bots_db.php --postgres
+      - if: matrix.suite == 'incidents'
+        run: php tests/incidents_db.php --postgres
       - if: matrix.suite == 'lite'
         uses: actions/checkout@v4
         with:

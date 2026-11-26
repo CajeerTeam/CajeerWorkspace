@@ -1,7 +1,7 @@
 <?php namespace Workspace; $b=$logBinding; $f=$logFilters; ?>
 <section class="panel"><h2>Журналы CajeerLogs</h2><p>Технические события проекта. В выборку не включаются произвольные сообщения, контекст, секреты, документы и финансовые сведения.</p>
 <form method="get" class="inline"><input type="hidden" name="p" value="logs"><label>Проект<select name="project" required><?php selectOptions($logProjects,$logProject) ?></select></label><button class="secondary">Открыть</button></form></section>
-<?php if($logProject!==null): ?>
+<?php if($logProject!==null): ?><p><a href="<?= h(url('incidents',['project'=>$logProject])) ?>">Инциденты проекта</a></p>
 <?php if($logOwner): ?><section class="panel"><h2>Политика доставки и хранения</h2><p>Оператор предварительно регистрирует отдельный источник в Logs, ограниченные токены и срок хранения. Удалённый срок должен быть не больше локального. Изменение цели привязки запрещено.</p>
 <form method="post" class="formgrid"><?php formFields('logs.policy') ?><input type="hidden" name="project_id" value="<?= (int)$logProject ?>"><label>Срок хранения, дней<input type="number" name="days" min="1" max="365" required value="<?= (int)($b['retention_days']??30) ?>"></label><label>Отправка и чтение<select name="active"><option value="1" <?= !$b||(int)$b['active']?'selected':'' ?>>Включить</option><option value="0" <?= $b&&!(int)$b['active']?'selected':'' ?>>Отключить</option></select></label><label><input type="checkbox" name="confirm" value="yes" required> Подтверждаю выделенный источник и политику хранения</label><button class="primary">Сохранить (MFA)</button></form></section><?php endif ?>
 <?php if(!$b): ?><section class="panel"><p>Для проекта не настроена интеграция.</p></section><?php else: ?>

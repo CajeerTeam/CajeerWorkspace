@@ -1,5 +1,5 @@
 <?php namespace Workspace; $pid=(int)$project['id']; $envOptions=array_column($environments,'name','id'); $linked=[]; foreach($bindings as $b)$linked[(int)$b['host_id']][(int)$b['remote_id']]=$b; ?>
-<p><a href="<?= h(url('deployments',['project'=>$pid])) ?>">Управляемое развёртывание</a></p>
+<p><a href="<?= h(url('deployments',['project'=>$pid])) ?>">Управляемое развёртывание</a> · <a href="<?= h(url('incidents',['project'=>$pid])) ?>">Инциденты</a></p>
 <p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($project['title']) ?></a></p>
 <section class="panel"><h2>Окружения dev / staging / prod</h2><p>Привязки подтверждаются владельцем. Инвентарь только для чтения; недоступность API не блокирует проект.</p>
 <?php foreach(INFRA_ENV as $kind=>$label): $e=null;foreach($environments as $env)if($env['kind']===$kind)$e=$env; ?><h3><?= h($label) ?> — <?= h($e['name']??'Не настроено') ?></h3><?php if($e): ?><p><a href="<?= h(url('logs',['project'=>$pid,'environment'=>$kind])) ?>">Logs окружения <?= h($kind) ?></a></p><?php endif ?><?php if($e): foreach($bindings as $b): if((int)$b['environment_id']!==(int)$e['id'])continue; $host=$hosts[$b['host_id']]??null; if(!$host)continue; $site=null; foreach($host['observations']['aapanel']['data']['sites']??[] as $s)if($s['id']===(int)$b['remote_id']&&$s['name']===$b['site_name'])$site=$s; ?>
