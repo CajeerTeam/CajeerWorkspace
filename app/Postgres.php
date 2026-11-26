@@ -91,7 +91,7 @@ function rowDigest($hash,array $row): void {
     hash_update($hash,"\n");
 }
 function transferSqlite(PDO $source,PDO $target): array {
-    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до 0.8.4.');
+    if (isPostgres($source) || !isPostgres($target) || schemaVersion($source)!==SCHEMA_VERSION) throw new Problem('Сначала обновите SQLite до актуальной схемы Workspace.');
     validateLedger($source,SCHEMA_VERSION,migrationFiles($source)); checkedDatabase($source);
     return atomic($target,function() use($source,$target) {
         installPostgres($target);

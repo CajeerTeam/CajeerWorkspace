@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.8.4
+CajeerWorkspace PHP 0.9.0
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -78,6 +78,10 @@ CajeerWorkspace PHP 0.8.4
   php bin/workspace logs:tick [LIMIT]
   php bin/workspace incidents:scan PROJECT_ID OWNER_ID
   php bin/workspace logs:prune
+  php bin/workspace pilot:seed OWNER_ID < private-input.json
+  php bin/workspace pilot:guest OWNER_ID DOCUMENT_ID REVISION HOURS [ORDER_ID] < email.txt
+  php bin/workspace pilot:check OWNER_ID
+  php bin/workspace pilot:probe OWNER_ID
   php bin/workspace version
 
 Роли: owner, manager, developer, accountant, legal, viewer.
@@ -148,6 +152,31 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'pilot:seed':
+            if ($argc!==3) throw new Problem('Формат: pilot:seed OWNER_ID < JSON');
+            $raw=stream_get_contents(STDIN,32769);
+            if ($raw===false||strlen($raw)>32768) throw new Problem('Pilot: JSON до 32 КиБ.');
+            try { $input=json_decode($raw,true,16,JSON_THROW_ON_ERROR); } catch (\JsonException) { throw new Problem('Pilot: некорректный JSON.'); }
+            if (!is_array($input)) throw new Problem('Pilot: ожидается JSON-объект.');
+            echo json_encode(pilotSeed($db,numberId($argv[2]),$input),JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; break;
+        case 'pilot:guest':
+            if ($argc!==6 && $argc!==7) throw new Problem('Формат: pilot:guest OWNER_ID DOCUMENT_ID REVISION HOURS [ORDER_ID] < email.txt');
+            $email=stream_get_contents(STDIN,1025);
+            if ($email===false||strlen($email)>1024) throw new Problem('Pilot: ожидается email гостя из stdin.');
+            // The token is shown once. Redirect stdout to a protected file, never a CI log.
+            echo pilotGuestInvite($db,numberId($argv[2]),numberId($argv[3]),numberId($argv[4]),normalizedEmail($email),numberId($argv[5]),isset($argv[6])?numberId($argv[6]):null),PHP_EOL; break;
+        case 'pilot:check':
+            if ($argc!==3) throw new Problem('Формат: pilot:check OWNER_ID');
+            $report=pilotCheck($db,numberId($argv[2]));
+            echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
+            exit($report['topology_ready']&&$report['guest_ready']?0:1);
+        case 'pilot:probe':
+            if ($argc!==3) throw new Problem('Формат: pilot:probe OWNER_ID');
+            if (!pilotCheck($db,numberId($argv[2]))['topology_ready']) throw new Problem('Pilot: сначала устраните расхождения структуры стенда.',409);
+            $rows=pilotProbes(pilotCatalog(connectionConfig()));
+            $ready=count(array_filter($rows,fn($r)=>in_array($r['status'],['ready','declared_version_only'],true)))===count(PILOT_CONNECTIONS);
+            echo json_encode(['version'=>VERSION,'mode'=>'live_readiness','ready'=>$ready,'connections'=>$rows],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
+            exit($ready?0:1);
         case 'reliability:work':
             if($argc>3)throw new Problem('Формат: reliability:work [LIMIT]');echo json_encode(relWork($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'reliability:reconcile': case 'reliability:retry':

@@ -19,6 +19,7 @@ jobs:
       - run: php -l bin/workspace
       - run: php bin/workspace doctor
       - run: php tests/integration_profiles.php
+      - run: php tests/pilot_db.php
       - run: php tests/run.php
       - run: python3 tests/web_e2e.py
       - run: php tests/migrations.php
