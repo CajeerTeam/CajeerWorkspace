@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline release switch for the schema-33 release candidate (POSIX)."""
+"""Offline release switch for the schema-34 release candidate (POSIX)."""
 import argparse
 import fcntl
 import json
@@ -15,8 +15,8 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.0.0', '1.0.1'
-SCHEMA = 33
+OLD, NEW = '1.0.1', '1.1.0'
+OLD_SCHEMA, SCHEMA = 33, 34
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
 
@@ -47,9 +47,11 @@ def archive_payload(path, version):
     require(sums == ''.join(f'{release.sha(data)}  {name}\n' for name, data in sorted(raw.items())).encode('ascii'), 'Archive manifest mismatch')
     require(raw['VERSION'].decode('ascii').strip() == version and
             re.search(r"const VERSION = '" + re.escape(version) + r"';", raw['app/Core.php'].decode()) and
-            re.search(r'const SCHEMA_VERSION = 33;', raw['app/Core.php'].decode()), 'Incompatible release')
+            re.search(r'const SCHEMA_VERSION = '+str(OLD_SCHEMA if version==OLD else SCHEMA)+r';', raw['app/Core.php'].decode()), 'Incompatible release')
     migrations = {n: release.sha(v) for n, v in raw.items() if n.startswith('database/') and n.endswith('.sql')}
-    require(FREEZE == {'schema': SCHEMA, 'migrations': migrations}, 'Frozen migrations differ')
+    expected_schema = OLD_SCHEMA if version==OLD else SCHEMA
+    expected_migrations = {n:h for n,h in FREEZE['migrations'].items() if int(Path(n).stem)<=expected_schema}
+    require(migrations == expected_migrations and json.loads(raw['database/schema-freeze.json']) == {'schema':expected_schema,'migrations':expected_migrations}, 'Frozen migrations differ')
     if version == NEW:
         require(release.validate_payload(raw) == NEW, 'Invalid candidate inventory')
     raw['SHA256SUMS'] = sums
@@ -148,7 +150,7 @@ def prepare(root, previous, previous_sha, candidate, signature, public_key, key_
     recovery.write(root/'deployment.json', recovery.canonical({'previous_sha256':previous_sha,'candidate_sha256':recovery.digest(root/'candidate.zip'),'public_key_sha256':key_sha}))
     verify_trees(root)
     set_pointer(root, OLD)
-    return {'status':'prepared','current':OLD,'schema':SCHEMA,'previous_sha256':previous_sha,'candidate_sha256':recovery.digest(root/'candidate.zip')}
+    return {'status':'prepared','current':OLD,'schema':OLD_SCHEMA,'previous_sha256':previous_sha,'candidate_sha256':recovery.digest(root/'candidate.zip')}
 
 
 @contextmanager
@@ -186,17 +188,39 @@ def live_snapshot(backend, data, objects):
     return recovery.pg_snapshot(objects,data)
 
 
+def old_snapshot(folder, backend, data, objects, env):
+    # Use the exact, verified predecessor code to interpret its own backup format.
+    script = "import sys,json; from pathlib import Path; sys.path.insert(0,sys.argv[1]); import recovery; print(json.dumps(recovery.sqlite_snapshot(Path(sys.argv[3])/'workspace.sqlite',Path(sys.argv[4])) if sys.argv[2]=='sqlite' else recovery.pg_snapshot(Path(sys.argv[4]),Path(sys.argv[3]))))"
+    return json.loads(command([sys.executable,'-B','-c',script,folder/'tools',backend,data,objects],env))
+
+
+def migrated_matches(before, after):
+    # Migration 034 adds only an empty policy table and a ledger entry. Never
+    # exempt business tables, sequences, cash, PDF/object hashes or queue state.
+    if before['schema']!=OLD_SCHEMA or after['schema']!=SCHEMA:
+        return False
+    a,b=dict(before),dict(after)
+    a['tables'],b['tables']=dict(a['tables']),dict(b['tables'])
+    if b['tables'].pop('organization_auth_policies',None)!={'rows':0,'sha256':release.sha(b'')}:
+        return False
+    if a['tables'].pop('schema_migrations',{}).get('rows')!=OLD_SCHEMA or b['tables'].pop('schema_migrations',{}).get('rows')!=SCHEMA:
+        return False
+    for d in (a,b):
+        d.pop('schema'); d.pop('schema_hash',None)
+    return recovery.canonical(a)==recovery.canonical(b)
+
+
 def smoke(folder, version, env, upgrade=False):
     cli = ['php',folder/'bin/workspace']
+    expected = OLD_SCHEMA if version==OLD else SCHEMA
     require(command(cli+['version'],env).decode().strip()==version,'Unexpected executable version')
     require(json.loads(command(cli+['doctor'],env))['ok'],'PHP runtime requirements failed')
-    def ledger():
-        m=json.loads(command(cli+['migrations'],env))
-        require(m['current']==SCHEMA and m['target']==SCHEMA and not m['pending'],'Schema not frozen')
-    ledger()
-    if upgrade:
+    m=json.loads(command(cli+['migrations'],env))
+    require(m['target']==expected,'Unexpected target schema')
+    if upgrade and m['current']==OLD_SCHEMA and m['pending']==[SCHEMA]:
         command(cli+['upgrade'],env)
-        ledger()
+        m=json.loads(command(cli+['migrations'],env))
+    require(m['current']==expected and not m['pending'],'Schema not ready')
 
 
 def switch(root, target, backup, backup_sha, data, objects):
@@ -208,31 +232,48 @@ def switch(root, target, backup, backup_sha, data, objects):
     with lock(root):
         verify_trees(root)
         active = pointer(root)
-        m, _, _ = recovery.verify(backup,backup_sha)
-        require(m['version']==OLD and m['snapshot']['schema']==SCHEMA,f'Requires verified pre-upgrade {OLD} backup')
+        old_folder=root/'releases'/OLD
+        command([sys.executable,'-B',old_folder/'tools/recovery.py','verify','--backup',backup,'--manifest-sha256',backup_sha])
+        raw=(backup/'manifest.json').read_bytes()
+        require(recovery.sha(raw)==backup_sha,'Backup manifest changed')
+        m=json.loads(raw)
+        require(m['version']==OLD and m['snapshot']['schema']==OLD_SCHEMA,f'Requires verified pre-upgrade {OLD} backup')
         backend=m['backend']
         require((os.environ.get('WORKSPACE_DB') or 'sqlite')==backend,'Database backend mismatch')
-        env=dict(os.environ,WORKSPACE_DATA=str(data),WORKSPACE_OBJECT_DIR=str(objects),WORKSPACE_DB=backend)
-        # Bind snapshots to the exact PG connection provided in the environment. No automatic data overwrite.
+        env=dict(os.environ,WORKSPACE_DATA=str(data),WORKSPACE_OBJECT_DIR=str(objects),WORKSPACE_DB=backend,PYTHONDONTWRITEBYTECODE='1')
         if backend=='pgsql': recovery.pg_env(objects)
         identity={'backup_sha256':backup_sha,'backend':backend,'data':str(data),'objects':str(objects)}
         if backend=='pgsql': identity['pg_target_sha256']=recovery.sha((':'.join(os.environ[k] for k in ('PGHOST','PGPORT','PGDATABASE','PGUSER'))).encode())
         journal=root/'upgrade.json'
-        if journal.exists() or journal.is_symlink():
+        recorded=journal.exists() or journal.is_symlink()
+        if recorded:
             require(not journal.is_symlink() and json.loads(journal.read_bytes())==identity,'Backup or target differs from recorded upgrade')
         else:
             require(active==OLD and target==NEW,'No recorded upgrade to roll back')
-        before=live_snapshot(backend,data,objects)
-        require(recovery.canonical(before)==recovery.canonical(m['snapshot']),'Live state differs from pre-upgrade backup; do not switch. Use reviewed recovery.')
-        smoke(root/'releases'/active,active,env)
-        smoke(root/'releases'/target,target,env,upgrade=target==NEW)
-        require(recovery.canonical(live_snapshot(backend,data,objects))==recovery.canonical(before),'State changed during offline smoke; current link not changed')
+        before=m['snapshot']
+        if target==OLD:
+            # Schema 34 cannot be opened by 1.0.1. An operator must restore and
+            # reconcile the previous snapshot offline; never silently downgrade.
+            try: restored=old_snapshot(old_folder,backend,data,objects,env)
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 33 using 1.0.1 recovery tools') from exc
+            require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
+            smoke(old_folder,OLD,env)
+            require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')
+        else:
+            try: old_live=old_snapshot(old_folder,backend,data,objects,env)
+            except ValueError:
+                require(recorded,'Cannot resume migration without recorded pre-upgrade state')
+                require(migrated_matches(before,live_snapshot(backend,data,objects)),'Migrated state differs from backup; use reviewed recovery')
+            else:
+                require(recovery.canonical(old_live)==recovery.canonical(before),'Live state differs from pre-upgrade backup; use reviewed recovery')
+                smoke(old_folder,OLD,env)
+                if not recorded:
+                    recovery.write(journal,recovery.canonical(identity)); recovery.fsync_dir(root)
+            smoke(root/'releases'/NEW,NEW,env,upgrade=True)
+            require(migrated_matches(before,live_snapshot(backend,data,objects)),'Unexpected state after migration; keep writers stopped and recover')
         verify_trees(root)
-        if not journal.exists():
-            recovery.write(journal,recovery.canonical(identity))
-            recovery.fsync_dir(root)
         set_pointer(root,target)
-        return {'status':'switched','previous':active,'current':target,'schema':SCHEMA,'snapshot_match':True,'backup_sha256':backup_sha,'service_ready':False}
+        return {'status':'switched','previous':active,'current':target,'schema':SCHEMA if target==NEW else OLD_SCHEMA,'snapshot_match':True,'backup_sha256':backup_sha,'service_ready':False}
 
 
 def main():

@@ -3,8 +3,8 @@
 <div class="loginbox"><h1>Вход в Workspace</h1>
 <?php if (!empty($error)): ?><div role="alert" class="alert"><?= h($error) ?></div><?php endif ?>
 <?php if (oidcEnabled()): ?><form method="post"><?php formFields('oidc.begin') ?><button class="primary">Войти через SkiF4er ID</button></form><p><a href="<?= h(url('guest.join')) ?>">Приглашение клиента</a></p><?php endif ?>
-<?php if (!oidcEnabled() || getenv('WORKSPACE_EMERGENCY_LOCAL')==='1'): ?>
-<?php if (oidcEnabled()): ?><p>Аварийный локальный вход владельца</p><?php endif ?>
+<?php if (localAuthEnabled() || (installationAuthPolicy()==='required' && getenv('WORKSPACE_EMERGENCY_LOCAL')==='1')): ?>
+<?php if (!localAuthEnabled()): ?><p>Аварийный локальный вход владельца</p><?php endif ?>
 <form method="post" class="stack"><?php formFields('login') ?>
 <label>Почта<input name="email" type="email" autocomplete="username" maxlength="254" required></label>
 <label>Пароль<input name="password" type="password" autocomplete="current-password" required></label>

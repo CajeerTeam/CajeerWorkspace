@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.0.0 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.0.1 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -45,10 +45,10 @@ class CandidateTests(unittest.TestCase):
 
     def test_frozen_sql_even_with_recomputed_manifest(self):
         raw=candidate.archive_payload(self.new,candidate.NEW); raw.pop('SHA256SUMS')
-        for name in ('database/001.sql','database/postgresql/033.sql'):
+        for name in ('database/001.sql','database/postgresql/034.sql'):
             changed=dict(raw); changed[name]+=b'\n-- unauthorized change\n'
             with self.assertRaises(ValueError): release.validate_payload(changed)
-        self.assertEqual(len(candidate.FREEZE['migrations']),66)
+        self.assertEqual(len(candidate.FREEZE['migrations']),68)
         tampered=dict(raw); tampered['database/001.sql']+=b'\n-- change\n'
         freeze=json.loads(tampered['database/schema-freeze.json']); freeze['migrations']['database/001.sql']=release.sha(tampered['database/001.sql'])
         tampered['database/schema-freeze.json']=json.dumps(freeze).encode()
@@ -58,13 +58,13 @@ class CandidateTests(unittest.TestCase):
         path=self.root/'clean.sqlite'
         with closing(sqlite3.connect(path)) as db, db:
             db.execute('PRAGMA foreign_keys=ON')
-            for i in range(1,34):
+            for i in range(1,35):
                 p=ROOT/'database'/f'{i:03}.sql'; db.executescript(p.read_text())
                 if i==3:
                     for j in (1,2): db.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(j,recovery.digest(ROOT/'database'/f'{j:03}.sql'),'applied'))
                 if i>=3: db.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(i,recovery.digest(p),'applied'))
-            db.execute('PRAGMA user_version=33'); self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok'); self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
-            self.assertEqual(db.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],33)
+            db.execute('PRAGMA user_version=34'); self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok'); self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],34)
 
     def test_native_clean_install(self):
         if not self.native: self.skipTest('Native PDO/cURL runtime unavailable')
@@ -76,7 +76,7 @@ class CandidateTests(unittest.TestCase):
         if not self.old: self.skipTest('Actual previous release not supplied')
         # Seed real SQLite schema + money, PDF/object, queue and 2 organizations using existing fixture.
         seed=runpy.run_path(str(ROOT/'tests/recovery.py'))['seed']
-        data,objects,db=seed(self.root)
+        data,objects,db=seed(self.root,candidate.OLD_SCHEMA)
         managed=self.root/'managed'
         candidate.prepare(managed,self.old,recovery.digest(self.old),self.new,self.sig,self.pub,self.keysha)
         self.assertEqual(candidate.pointer(managed),candidate.OLD)
@@ -88,19 +88,27 @@ class CandidateTests(unittest.TestCase):
 
     def test_switch_and_rollback(self):
         managed,data,objects,db,backup,sha=self.fixture()
-        # The state machine is tested even on extension-limited machines; native test below does not mock smoke.
-        with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke') as smoke:
+        def migrate(folder,version,env,upgrade=False):
+            if version!=candidate.NEW or not upgrade: return
+            with closing(sqlite3.connect(db)) as c, c:
+                if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
+                    p=ROOT/'database/034.sql';c.executescript(p.read_text())
+                    c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(34,recovery.digest(p),'applied'))
+                    c.execute('PRAGMA user_version=34')
+        with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=migrate):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)
-            self.assertEqual(smoke.call_count,2)
-            self.assertEqual(candidate.command(['php',managed/'current/bin/workspace','version']).decode().strip(),candidate.NEW)
+            with self.assertRaises(ValueError): candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
+            # A separately reviewed restore is required before old code can be selected.
+            with closing(sqlite3.connect(backup/'workspace.sqlite')) as src, closing(sqlite3.connect(db)) as dst: src.backup(dst)
             candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             self.assertEqual(candidate.pointer(managed),candidate.OLD)
             candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             with closing(sqlite3.connect(db)) as c, c: c.execute("UPDATE projects SET title='New committed work' WHERE id=1")
+            with self.assertRaises(ValueError): candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             with self.assertRaises(ValueError): candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             self.assertEqual(candidate.pointer(managed),candidate.NEW)
-            with closing(sqlite3.connect(db)) as c, c: self.assertEqual(c.execute('SELECT title FROM projects WHERE id=1').fetchone()[0],'New committed work')
+            with closing(sqlite3.connect(db)) as c: self.assertEqual(c.execute('SELECT title FROM projects WHERE id=1').fetchone()[0],'New committed work')
 
     def test_reject_modified_release_and_smoke_failure(self):
         managed,data,objects,db,backup,sha=self.fixture()
@@ -117,6 +125,8 @@ class CandidateTests(unittest.TestCase):
         managed,data,objects,db,backup,sha=self.fixture()
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}):
             candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
+            with self.assertRaises(ValueError): candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
+            with closing(sqlite3.connect(backup/'workspace.sqlite')) as src, closing(sqlite3.connect(db)) as dst: src.backup(dst)
             candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             self.assertEqual(candidate.pointer(managed),candidate.OLD)
 

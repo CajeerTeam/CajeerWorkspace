@@ -35,8 +35,8 @@ try {
     }
     $user = currentUser($db);
     if ($page==='oidc.callback') {
-        if ($method!=='GET'||$user||!empty($_SESSION['guest_id'])) throw new Problem('Недопустимый callback.',403);
-        oidcCallback($db);
+        if ($method!=='GET'||!empty($_SESSION['guest_id'])||isset($_SESSION['oss_contributor'])||($user && empty($_SESSION['oidc_tx']['switch']))) throw new Problem('Недопустимый callback.',403);
+        oidcCallback($db,$user);
     }
     if ($method === 'POST') handlePost($db,$user);
     if ($method !== 'GET' && $method !== 'HEAD') { header('Allow: GET, HEAD, POST'); throw new Problem('Метод не поддерживается.',405); }

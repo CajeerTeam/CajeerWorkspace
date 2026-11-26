@@ -154,16 +154,28 @@ function oidcPrincipal(PDO $db,array $claims,?string $guestHash,?string $staffHa
     if (!$id||!activeGuest($db,(int)$id)) throw new Problem('Учётная запись ID не привязана к Workspace.',403);
     return ['user'=>null,'guest'=>(int)$id];
 }
-function oidcCallback(PDO $db): never {
+// Validate the bound identity and membership again inside the callback transaction.
+function oidcSwitchPrincipal(PDO $db,array $principal,array $switch): array {
+    if (!$principal['user'] || (int)$principal['user']['id']!==$switch['uid'] || (int)$principal['user']['session_version']!==$switch['version']) throw new Problem('SkiF4er ID должен принадлежать исходной учётной записи.',403);
+    organizationUser($db,$principal['user']+['auth_kind'=>'oidc'],$switch['org']);
+    $principal['organization']=$switch['org'];
+    return $principal;
+}
+function oidcCallback(PDO $db,?array $current=null): never {
+    if (!oidcEnabled()) throw new Problem('Вход ID отключён политикой установки.',403);
     $tx=$_SESSION['oidc_tx']??null; unset($_SESSION['oidc_tx']);
     if (!is_array($tx)||$tx['at']<time()-300||!is_string($_GET['state']??null)||!hash_equals($tx['state'],$_GET['state'])||isset($_GET['error'])||(isset($_GET['iss'])&&$_GET['iss']!==ID_ISSUER)||!is_string($_GET['code']??null)||strlen($_GET['code'])>4096||$_GET['code']==='') throw new Problem('Вход ID не подтверждён. Начните заново.',401);
+    $switch=$tx['switch']??null;
+    if ($switch!==null && (!$current || ($current['auth_kind']??null)!=='local' || (int)$current['id']!==$switch['uid'] || (int)$current['session_version']!==$switch['version'])) throw new Problem('Исходная сессия больше не действительна.',403);
+    if ($switch===null && $current) throw new Problem('Недопустимый callback.',403);
     $cfg=oidcConfig(); $response=oidcHttp(oidcDiscovery()['token_endpoint'],['grant_type'=>'authorization_code','code'=>$_GET['code'],'redirect_uri'=>$cfg['callback'],'code_verifier'=>$tx['verifier']]);
     $tokens=oidcTokenSet($response); $claims=oidcClaims($tokens['id'],$tx['nonce']);
     $record=['subject'=>$claims['sub'],'sid'=>$claims['sid']??null]; oidcOnline($tokens,$record);
     $handle=bin2hex(random_bytes(32));
-    $principal=atomic($db,function() use($db,$tx,$claims,$record,$handle) {
+    $principal=atomic($db,function() use($db,$tx,$claims,$record,$handle,$switch) {
         if (query($db,'SELECT 1 FROM oidc_logout_events WHERE issuer=? AND issued_at>=? AND ((sid IS NOT NULL AND sid=? AND (subject IS NULL OR subject=?)) OR (sid IS NULL AND subject=?))',[ID_ISSUER,$claims['iat'],$record['sid'],$record['subject'],$record['subject']])->fetchColumn()) throw new Problem('Сессия ID уже завершена.',401);
         $p=oidcPrincipal($db,$claims,$tx['guest'],$tx['staff']??null);
+        if ($switch!==null) $p=oidcSwitchPrincipal($db,$p,$switch);
         query($db,'DELETE FROM oidc_sessions WHERE expires_at<=?',[time()]);
         query($db,'INSERT INTO oidc_sessions(handle,issuer,subject,sid,user_id,guest_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)',[hash('sha256',$handle),ID_ISSUER,$record['subject'],$record['sid'],$p['user']['id']??null,$p['guest'],$claims['iat'],time()+43200]);
         return $p;

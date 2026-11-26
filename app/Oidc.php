@@ -3,7 +3,17 @@ declare(strict_types=1);
 namespace Workspace;
 
 const ID_ISSUER='https://id.skif4er.ru/realms/skif4er';
-function oidcEnabled(): bool { return getenv('WORKSPACE_OIDC_REQUIRED')==='1' || (getenv('WORKSPACE_OIDC_CLIENT_ID') ?: '')!=='' || (getenv('WORKSPACE_OIDC_CLIENT_SECRET') ?: '')!==''; }
+// Explicit installation policy is controlled by the OS administrator. Unset preserves 1.0.x behavior.
+function installationAuthPolicy(): string {
+    $mode=getenv('WORKSPACE_AUTH_POLICY');
+    if ($mode!==false && $mode!=='') {
+        if (!in_array($mode,['local','mixed','required'],true)) throw new Problem('Некорректный WORKSPACE_AUTH_POLICY: local, mixed или required.',503);
+        return $mode;
+    }
+    return getenv('WORKSPACE_OIDC_REQUIRED')==='1' || (getenv('WORKSPACE_OIDC_CLIENT_ID') ?: '')!=='' || (getenv('WORKSPACE_OIDC_CLIENT_SECRET') ?: '')!=='' ? 'required' : 'local';
+}
+function oidcEnabled(): bool { return installationAuthPolicy()!=='local'; }
+function localAuthEnabled(): bool { return installationAuthPolicy()!=='required'; }
 function oidcConfig(): array {
     $id=getenv('WORKSPACE_OIDC_CLIENT_ID')?:''; $secret=getenv('WORKSPACE_OIDC_CLIENT_SECRET')?:'';
     $base=getenv('WORKSPACE_PUBLIC_URL')?:'';
@@ -79,11 +89,12 @@ function verifyOidcJwt(string $jwt,array $jwks,string $client,?string $nonce=nul
 function oidcClaims(string $jwt,?string $nonce=null,bool $logout=false): array {
     return verifyOidcJwt($jwt,oidcHttp(oidcDiscovery()['jwks_uri']),oidcConfig()['id'],$nonce,$logout);
 }
-function oidcBegin(?string $guestToken=null,?string $staffInvite=null): never {
+function oidcBegin(?string $guestToken=null,?string $staffInvite=null,?array $switch=null): never {
+    if (!oidcEnabled()) throw new Problem('Вход ID отключён политикой установки.',403);
     $cfg=oidcConfig(); $d=oidcDiscovery();
-    $tx=['state'=>b64url(random_bytes(32)),'nonce'=>b64url(random_bytes(32)),'verifier'=>b64url(random_bytes(48)),'at'=>time(),'guest'=>$guestToken,'staff'=>$staffInvite];
+    $tx=['state'=>b64url(random_bytes(32)),'nonce'=>b64url(random_bytes(32)),'verifier'=>b64url(random_bytes(48)),'at'=>time(),'guest'=>$guestToken,'staff'=>$staffInvite,'switch'=>$switch];
     $_SESSION['oidc_tx']=$tx;
-    header('Location: '.$d['authorization_endpoint'].'?'.http_build_query(['client_id'=>$cfg['id'],'redirect_uri'=>$cfg['callback'],'response_type'=>'code','scope'=>'openid profile email','state'=>$tx['state'],'nonce'=>$tx['nonce'],'code_challenge'=>b64url(hash('sha256',$tx['verifier'],true)),'code_challenge_method'=>'S256'],'','&',PHP_QUERY_RFC3986),true,303); exit;
+    header('Location: '.$d['authorization_endpoint'].'?'.http_build_query(['client_id'=>$cfg['id'],'redirect_uri'=>$cfg['callback'],'response_type'=>'code','scope'=>'openid profile email','state'=>$tx['state'],'nonce'=>$tx['nonce'],'code_challenge'=>b64url(hash('sha256',$tx['verifier'],true)),'code_challenge_method'=>'S256']+($switch!==null?['prompt'=>'login']:[]),'','&',PHP_QUERY_RFC3986),true,303); exit;
 }
 function oidcTokenSet(array $response,?array $old=null): array {
     if (!is_string($response['access_token']??null)||$response['access_token']===''||strlen($response['access_token'])>65536||strtolower((string)($response['token_type']??''))!=='bearer'||!is_int($response['expires_in']??null)||$response['expires_in']<1) throw new Problem('Некорректный набор токенов.',401);

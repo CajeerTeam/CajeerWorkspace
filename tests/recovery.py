@@ -19,12 +19,14 @@ import recovery
 import load
 
 
-def seed(root):
+def seed(root, schema=recovery.SCHEMA):
     data=root/'data';data.mkdir(mode=0o700);objects=root/'objects';objects.mkdir(mode=0o700);db=data/'workspace.sqlite'
     with closing(sqlite3.connect(db)) as c, c:
-        for p in sorted((ROOT/'database').glob('*.sql')):c.executescript(p.read_text())
-        for p in sorted((ROOT/'database').glob('*.sql')):c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(int(p.stem),hashlib.sha256(p.read_bytes()).hexdigest(),'applied'))
-        c.execute(f'PRAGMA user_version={recovery.SCHEMA}')
+        for p in sorted((ROOT/'database').glob('*.sql')):
+            if int(p.stem)<=schema: c.executescript(p.read_text())
+        for p in sorted((ROOT/'database').glob('*.sql')):
+            if int(p.stem)<=schema: c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(int(p.stem),hashlib.sha256(p.read_bytes()).hexdigest(),'applied'))
+        c.execute(f'PRAGMA user_version={schema}')
         c.commit()
         assert c.execute('PRAGMA journal_mode=WAL').fetchone()[0]=='wal'
         c.execute("INSERT INTO users(id,email,name,role,password_hash) VALUES(1,'owner@example.test','Owner','owner','fixture')")

@@ -6,11 +6,12 @@ use PDO;
 function organizationsFor(PDO $db,int $uid): array {
     return query($db,'SELECT o.id,o.name,m.role,u.session_version FROM organizations o JOIN organization_members m ON m.organization_id=o.id JOIN users u ON u.id=m.user_id WHERE m.user_id=? AND u.enabled=1 ORDER BY o.id',[$uid])->fetchAll();
 }
-function organizationUser(PDO $db,array $user,?int $org=null): array {
+function organizationUser(PDO $db,array $user,?int $org=null,bool $enforceAuth=true): array {
     $org ??= isset($user['organization_id'])?(int)$user['organization_id']:null;
     $rows=organizationsFor($db,(int)$user['id']);
     foreach ($rows as $r) if ($org===null || (int)$r['id']===$org) {
         if (isset($user['session_version']) && (int)$user['session_version']!==(int)$r['session_version']) throw new Problem('Сессия отозвана.',403);
+        if ($enforceAuth && isset($user['auth_kind'])) requireOrganizationAuth($db,(int)$r['id'],$user['auth_kind'],(int)$user['id']);
         return array_replace($user,['organization_id'=>(int)$r['id'],'organization_name'=>$r['name'],'role'=>$r['role']]);
     }
     throw new Problem('Нет доступа к организации.',403);
@@ -137,6 +138,7 @@ function acceptInvitation(PDO $db,string $token,?array $user,string $name='',str
     if (!preg_match('/\A[a-f0-9]{64}\z/',$token)) throw new Problem('Недействительное приглашение.',404);
     return atomic($db,function() use($db,$token,$user,$name,$password) {
         $inv=entity($db,'SELECT * FROM invitations WHERE token_hash=? AND expires_at>? AND accepted_at IS NULL AND revoked_at IS NULL',[hash('sha256',$token),time()]);
+        requireOrganizationAuth($db,(int)$inv['organization_id'],$user['auth_kind']??'local',(int)($user['id']??0));
         $existing=query($db,'SELECT id,email,enabled,session_version FROM users WHERE LOWER(email)=?',[$inv['email']])->fetch();
         if ($existing) {
             if (!$user || (int)$existing['id']!==(int)$user['id'] || !(int)$existing['enabled'] || (isset($user['session_version']) && (int)$user['session_version']!==(int)$existing['session_version'])) throw new Problem('Войдите в приглашённую учётную запись.',403);

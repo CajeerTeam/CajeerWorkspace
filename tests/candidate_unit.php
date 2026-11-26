@@ -26,5 +26,5 @@ foreach(['2026-02-29','29.02.2024','2026-13-01','2026-01-00'] as $s)rcDeny(fn()=
 rcCheck(h('Договор <script> & "')==='Договор &lt;script&gt; &amp; &quot;','UTF-8 escaping');
 rcCheck(csvText(' =1+2')==="' =1+2"&&csvText('Договор')==='Договор','CSV injection');
 rcCheck(str_contains(url('search',['q'=>'Договор & NDA']),'%26'),'UTF-8 URL');
-rcCheck(count(migrationFiles())===33,'Frozen runtime migrations');
+rcCheck(count(migrationFiles())===SCHEMA_VERSION,'Frozen runtime migrations');
 echo "OK · $n frozen RBAC/localization checks\n";

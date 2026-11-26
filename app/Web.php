@@ -56,12 +56,15 @@ function currentUser(PDO $db): ?array {
     if (!$u || (int)$u['session_version'] !== $_SESSION['v'] || $now-$_SESSION['seen']>1800 || $now-$_SESSION['born']>43200) {
         killLogin(); return null;
     }
-    if (($_SESSION['auth_kind']==='local' && oidcEnabled()) || ($_SESSION['auth_kind']==='emergency' && (!oidcEnabled() || !emergencyAllowed($db,(int)$u['id'])))) { killLogin(); return null; }
+    $kind=$_SESSION['auth_kind'];
+    if (($kind==='local' && !localAuthEnabled()) || ($kind==='oidc' && !oidcEnabled()) || ($kind==='emergency' && (installationAuthPolicy()!=='required' || !emergencyAllowed($db,(int)$u['id'])))) { killLogin(); return null; }
+    $u['auth_kind']=$kind;
     $_SESSION['seen'] = $now;
     $orgs=organizationsFor($db,(int)$u['id']);
     if (!$orgs) return array_replace($u,['organization_id'=>null,'organization_name'=>'Нет организации','organizations'=>[],'role'=>'viewer']);
     $selected=(int)($_SESSION['org']??0);
-    if (!in_array($selected,array_map('intval',array_column($orgs,'id')),true)) $selected=(int)$orgs[0]['id'];
+    if (!in_array($selected,array_map('intval',array_column($orgs,'id')),true)) $selected=firstAuthOrganization($db,$orgs,$kind,(int)$u['id']);
+    if ($selected===null || !organizationAuthAllowed($db,$selected,$kind,(int)$u['id'])) { killLogin(); return null; }
     $_SESSION['org']=$selected;
     return organizationUser($db,$u,$selected)+['organizations'=>$orgs];
 }
@@ -127,13 +130,16 @@ function handlePost(PDO $db, ?array $user): never {
         $email = is_string($_POST['email'] ?? null) ? $_POST['email'] : '';
         $password = is_string($_POST['password'] ?? null) ? $_POST['password'] : '';
         $u = authenticate($db,$email,$password,$_SERVER['REMOTE_ADDR'] ?? '');
-        if (!$u || (oidcEnabled() && !emergencyAllowed($db,(int)$u['id']))) throw new Problem('Проверьте почту и пароль либо используйте SkiF4er ID.',401);
+        if (!$u || (!localAuthEnabled() && !emergencyAllowed($db,(int)$u['id']))) throw new Problem('Проверьте почту и пароль либо используйте SkiF4er ID.',401);
+        $kind=localAuthEnabled()?'local':'emergency';
+        $orgs=organizationsFor($db,(int)$u['id']); $org=firstAuthOrganization($db,$orgs,$kind,(int)$u['id']);
+        if ($orgs && $org===null) throw new Problem('Для ваших организаций требуется вход через SkiF4er ID.',401);
         killLogin();
-        $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>oidcEnabled()?'emergency':'local'];
-        go(oidcEnabled()?'security':'overview');
+        $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>$kind,'org'=>$org];
+        go($kind==='emergency'?'security':'overview');
     }
     if ($act==='invite.accept') {
-        if (oidcEnabled() && !$user) throw new Problem('Войдите через SkiF4er ID. Новую внутреннюю учётную запись привязывает оператор.',403);
+        if (!localAuthEnabled() && !$user) throw new Problem('Войдите через SkiF4er ID. Новую внутреннюю учётную запись привязывает оператор.',403);
         if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
         $result=acceptInvitation($db,word($_POST['token']??'',64,'Код'),$user, is_string($_POST['name']??null)?$_POST['name']:'',is_string($_POST['password']??null)?$_POST['password']:'');
         if (!$user) { go('login'); }
@@ -144,7 +150,16 @@ function handlePost(PDO $db, ?array $user): never {
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
-    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0)); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+    if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0),false);
+        if (!organizationAuthAllowed($db,(int)$u['organization_id'],$user['auth_kind'],(int)$user['id'])) {
+            if ($user['auth_kind']==='local' && oidcEnabled()) {
+                if (!query($db,'SELECT 1 FROM oidc_identities WHERE user_id=? AND issuer=?',[$user['id'],ID_ISSUER])->fetchColumn()) throw new Problem('Для перехода в эту организацию оператор должен привязать ваш SkiF4er ID.',403);
+                authThrottle($db,'oidc:'.($_SERVER['REMOTE_ADDR']??''),40);
+                oidcBegin(null,null,['uid'=>(int)$user['id'],'version'=>(int)$user['session_version'],'org'=>(int)$u['organization_id']]);
+            }
+            throw new Problem('Организация требует вход через SkiF4er ID.',403);
+        }
+        unset($_SESSION['oidc_tx']); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
@@ -318,6 +333,8 @@ function handlePost(PDO $db, ?array $user): never {
             $_SESSION['guest_token_project']=$projectId(); go('project',['id'=>$projectId()]);
         case 'guest.revoke':
             revokeGuest($db,$user,$projectId(),numberId($_POST['guest_id']??0)); go('project',['id'=>$projectId()]);
+        case 'org.auth-policy':
+            setOrganizationAuthPolicy($db,$user,choice($_POST['mode']??'',ORG_AUTH_POLICIES)); $_SESSION['notice']='Политика входа сохранена.'; go('team');
         case 'org.create':
             $_SESSION['org']=createOrganization($db,$user,word($_POST['name']??'',120,'Организация')); unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('team');
         case 'org.rename':
@@ -579,6 +596,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data['memberAdmin']=($user['role']==='owner'||($user['role']==='manager' && roleAllows($data['projectRole'],'manage')));
             if (roleAllows($data['projectRole'],'manage')) {
                 $data['members']=orgMembers($db,$user);
+            $data['orgAuthPolicy']=organizationAuthPolicy($db,(int)$user['organization_id']);
                 $data['projectMembers']=array_map('intval',query($db,'SELECT user_id FROM project_members WHERE project_id=?',[$p['id']])->fetchAll(PDO::FETCH_COLUMN));
                 $data['explicitRoles']=array_column(query($db,'SELECT user_id,role FROM project_access WHERE project_id=?',[$p['id']])->fetchAll(),'role','user_id');
                 $data['assignable']=array_column(array_filter($data['members'],fn($m)=>$m['enabled'] && ($m['role']==='owner'||(in_array((int)$m['id'],$data['projectMembers'],true) && roleAllows($data['explicitRoles'][$m['id']]??$m['role'],'work')))),'name','id');
@@ -646,6 +664,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             break;
         case 'team':
             $data['members']=orgMembers($db,$user);
+            $data['orgAuthPolicy']=organizationAuthPolicy($db,(int)$user['organization_id']);
             $data['teams']=query($db,'SELECT * FROM teams WHERE organization_id=? ORDER BY name',[$user['organization_id']])->fetchAll();
             $data['teamMembers']=query($db,'SELECT team_id,user_id FROM team_members WHERE organization_id=?',[$user['organization_id']])->fetchAll();
             if ($user['role']==='owner') {

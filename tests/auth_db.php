@@ -4,7 +4,7 @@ namespace Workspace;
 require dirname(__DIR__).'/app/bootstrap.php';
 require ROOT.'/app/Web.php';
 $dir=sys_get_temp_dir().'/cws-auth-'.bin2hex(random_bytes(8)); mkdir($dir,0700);
-putenv('WORKSPACE_DATA='.$dir); putenv('WORKSPACE_DB=sqlite'); putenv('WORKSPACE_MFA_KEY='.str_repeat('ab',32)); putenv('WORKSPACE_OIDC_CLIENT_ID=test-workspace');
+putenv('WORKSPACE_AUTH_POLICY'); putenv('WORKSPACE_DATA='.$dir); putenv('WORKSPACE_DB=sqlite'); putenv('WORKSPACE_MFA_KEY='.str_repeat('ab',32)); putenv('WORKSPACE_OIDC_CLIENT_ID=test-workspace');
 $n=0;
 function dbCheck(bool $value,string $label): void { global $n; if (!$value) throw new \RuntimeException($label); $n++; }
 function dbReject(callable $f,string $label): void { try { $f(); } catch (Problem $e) {dbCheck(true,$label);return;} throw new \RuntimeException($label); }
@@ -61,11 +61,47 @@ try {
     query($db,'INSERT INTO emergency_accounts VALUES(1)',[]);
     putenv('WORKSPACE_EMERGENCY_LOCAL=1'); dbCheck(emergencyAllowed($db,1),'enrolled owner emergency allowed');
     putenv('WORKSPACE_EMERGENCY_LOCAL=0'); dbCheck(!emergencyAllowed($db,1),'emergency flag disabled');
+    // Actual persisted organization policy and application session guards.
+    putenv('WORKSPACE_AUTH_POLICY=mixed');
+    $second=createOrganization($db,$owner,'Mixed policy organization');
+    $oidcOwner=$owner+['auth_kind'=>'oidc'];
+    $_SESSION['auth_kind']='local'; $_SESSION['mfa_at']=time();
+    dbReject(fn()=>setOrganizationAuthPolicy($db,$owner+['auth_kind'=>'local'],'required'),'password cannot tighten policy');
+    $_SESSION['auth_kind']='oidc'; unset($_SESSION['mfa_at']);
+    dbReject(fn()=>setOrganizationAuthPolicy($db,$oidcOwner,'required'),'MFA required for policy');
+    $_SESSION['mfa_at']=time();
+    $staffUser=organizationUser($db,$staff['user'],1)+['auth_kind'=>'oidc'];
+    dbReject(fn()=>setOrganizationAuthPolicy($db,$staffUser,'required'),'non-owner cannot change policy');
+    setOrganizationAuthPolicy($db,$oidcOwner,'required');
+    dbCheck(organizationAuthPolicy($db,1)==='required'&&organizationAuthPolicy($db,$second)==='inherit','policy isolated by tenant');
+    dbCheck(!organizationAuthAllowed($db,1,'local',1)&&organizationAuthAllowed($db,$second,'local',1),'strict org blocks password only in that organization');
+    dbReject(fn()=>organizationUser($db,$owner+['auth_kind'=>'local'],1),'domain authorization rejects local session');
+    dbCheck((int)organizationUser($db,$oidcOwner,1)['id']===1,'same user via ID allowed');
+    dbCheck(firstAuthOrganization($db,organizationsFor($db,1),'local',1)===$second,'password login selects permitted organization');
+    $invite=issueInvitation($db,$oidcOwner,'strict@example.test','viewer',1);
+    dbReject(fn()=>acceptInvitation($db,$invite,null,'Strict','test-password-only'),'local invitation cannot bypass SSO');
+    dbCheck(query($db,'SELECT accepted_at FROM invitations WHERE token_hash=?',[hash('sha256',$invite)])->fetchColumn()===null,'denied invitation not consumed');
+    $tx=['uid'=>1,'version'=>(int)$owner['session_version'],'org'=>1];
+    dbCheck(oidcSwitchPrincipal($db,['user'=>$owner,'guest'=>null],$tx)['organization']===1,'same identity step-up');
+    dbReject(fn()=>oidcSwitchPrincipal($db,['user'=>$staff['user'],'guest'=>null],$tx),'other OIDC identity denied');
+    dbReject(fn()=>oidcSwitchPrincipal($db,['user'=>$owner,'guest'=>null],array_replace($tx,['version'=>$tx['version']-1])),'revoked source session denied');
+    dbReject(fn()=>oidcSwitchPrincipal($db,['user'=>$owner,'guest'=>null],array_replace($tx,['org'=>999999])),'non-member target denied');
+    dbCheck(authPolicyReport($db)['ok'],'bound owner diagnostic');
+    putenv('WORKSPACE_AUTH_POLICY=local'); dbCheck(!authPolicyReport($db)['ok']&&!organizationAuthAllowed($db,1,'local',1)&&!organizationAuthAllowed($db,1,'oidc',1),'conflicting installation fails closed');
+    putenv('WORKSPACE_AUTH_POLICY=required'); putenv('WORKSPACE_EMERGENCY_LOCAL=1');
+    dbCheck(!organizationAuthAllowed($db,1,'emergency',1)&&organizationAuthAllowed($db,$second,'emergency',1),'strict organization excludes emergency exception');
+    putenv('WORKSPACE_AUTH_POLICY=mixed'); putenv('WORKSPACE_EMERGENCY_LOCAL=0');
+    setOrganizationAuthPolicy($db,$oidcOwner,'inherit'); dbCheck(organizationAuthAllowed($db,1,'local',1),'explicit owner change restores inherited mixed policy');
+    setOrganizationAuthPolicy($db,$oidcOwner,'required');
+    dbCheck((int)query($db,"SELECT COUNT(*) FROM audit_events WHERE event='org.auth-policy' AND organization_id=1")->fetchColumn()===3,'policy changes audited');
+    $_SESSION=['uid'=>1,'v'=>(int)$owner['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>'local','org'=>1];
+    dbCheck(currentUser($db)===null && empty($_SESSION['uid']),'existing password session loses access after tightening');
     session_write_close();
     if (in_array('--postgres',$argv,true)) {
         $report=migrateToPostgres($dir.'/source.sqlite');
         dbCheck($report['tables']['guest_invites']['rows']===2 && $report['tables']['mfa_credentials']['rows']===1 && $report['tables']['oidc_sessions']['rows']===3,'auth tables transferred and checksummed');
         $pg=postgresConnect(); dbCheck(schemaVersion($pg)===SCHEMA_VERSION && activeGuest($pg,$gid)===null,'PostgreSQL revocation preserved');
+        dbCheck($report['tables']['organization_auth_policies']['rows']===1 && organizationAuthPolicy($pg,1)==='required' && !organizationAuthAllowed($pg,1,'local',1),'PostgreSQL policy transferred and enforced');
         $box=query($pg,'SELECT secret_box FROM mfa_credentials WHERE user_id=1')->fetchColumn(); dbCheck(openMfa($box,1)===$secret,'encrypted MFA preserved');
         dbCheck(query($pg,'SELECT sha256 FROM document_versions WHERE document_id=? AND revision=1',[$doc])->fetchColumn()===hash('sha256',$pdf1),'PDF preserved');
         $pg=null;
