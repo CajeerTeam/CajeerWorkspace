@@ -100,7 +100,7 @@ class ProductionTests(unittest.TestCase):
         self.assemble();self.sign_all();self.publish()
         bundle=self.root/'bundle';tag='v'+prod.VERSION
         def simulate(mode):
-            assets=[];uploaded={};calls=[];row={'id':7,'tag_name':tag,'draft':True,'prerelease':False,'assets':assets}
+            assets=[];uploaded={};calls=[];row={'id':7,'tag_name':tag,'draft':True,'prerelease':mode=='preview','assets':assets}
             def api(path,method='GET',data=None):
                 calls.append((path,method))
                 if path.startswith('/git/ref/tags/'):
@@ -108,8 +108,9 @@ class ProductionTests(unittest.TestCase):
                 if path.startswith('/releases?'):
                     return [row] if mode=='exists' else []
                 if path=='/releases' and method=='POST':
-                    self.assertTrue(data['draft']);self.assertEqual(data['target_commitish'],commit);return row
-                if path=='/releases/7' and method=='PATCH':row['draft']=False;return row
+                    self.assertTrue(data['draft']);self.assertEqual(data['prerelease'],mode=='preview');self.assertEqual(data['target_commitish'],commit);return row
+                if path=='/releases/7' and method=='PATCH':
+                    self.assertEqual(data['prerelease'],mode=='preview');self.assertEqual(data['make_latest'],'false' if mode=='preview' else 'true');row['draft']=False;return row
                 if path=='/releases/7':return row
                 raise AssertionError(path)
             def upload(rid,path):
@@ -118,23 +119,23 @@ class ProductionTests(unittest.TestCase):
                 if mode=='bad-asset' and path.name==prod.NAME:a['digest']='sha256:'+'0'*64
                 assets.append(a);return a
             args=(bundle,self.registry,self.pin,self.keys/'release.pem',source,api,upload)
-            if mode!='ok':
+            if mode not in ('ok','preview'):
                 with self.assertRaises(ValueError):publisher.publish(*args)
                 self.assertNotIn(('/releases/7','PATCH'),calls)
                 if mode in ('bad-tag','exists'):self.assertFalse(uploaded)
                 return
-            result=publisher.publish(*args);self.assertEqual(result['status'],'published')
+            result=publisher.publish(*args,channel='preview' if mode=='preview' else 'stable');self.assertEqual(result['status'],'published')
             self.assertEqual(set(uploaded),{prod.NAME,prod.NAME+'.sig',publisher.META,publisher.SIG})
-            m=json.loads(uploaded[publisher.META]);self.assertEqual(m['commit'],commit);self.assertEqual(m['schema'],36)
+            m=json.loads(uploaded[publisher.META]);self.assertEqual(m['channel'],'preview' if mode=='preview' else 'stable');self.assertEqual(m['commit'],commit);self.assertEqual(m['schema'],36)
             self.assertEqual(m['supported_from'][0]['version'],prod.PREVIOUS)
             self.assertEqual(m['acceptance_sha256'],recovery.digest(bundle/'acceptance.json'))
             self.assertEqual(m['package']['sha256'],recovery.sha(uploaded[prod.NAME]))
             self.assertNotIn(b'Synthetic test fixture',uploaded[publisher.META])
             for name in (publisher.META,publisher.SIG):(self.root/name).write_bytes(uploaded[name])
             candidate.verify_signature(self.root/publisher.META,self.root/publisher.SIG,self.registry/'release.pub.pem',m['release_key_sha256'])
-            script=r"require 'app/bootstrap.php'; \Workspace\updateManifest(file_get_contents($argv[1]),file_get_contents($argv[2]),file_get_contents($argv[3]),$argv[4],$argv[5],$argv[6]);"
-            subprocess.run(['php','-r',script,str(self.root/publisher.META),str(self.root/publisher.SIG),str(self.registry/'release.pub.pem'),m['release_key_sha256'],prod.VERSION,commit],cwd=ROOT,check=True,capture_output=True)
-        for mode in ('ok','bad-tag','exists','bad-asset'):
+            script=r"require 'app/bootstrap.php'; \Workspace\updateManifest(file_get_contents($argv[1]),file_get_contents($argv[2]),file_get_contents($argv[3]),$argv[4],$argv[5],$argv[6],$argv[7]);"
+            subprocess.run(['php','-r',script,str(self.root/publisher.META),str(self.root/publisher.SIG),str(self.registry/'release.pub.pem'),m['release_key_sha256'],prod.VERSION,commit,m['channel']],cwd=ROOT,check=True,capture_output=True)
+        for mode in ('ok','preview','bad-tag','exists','bad-asset'):
             with self.subTest(mode=mode):simulate(mode)
         (source/'README.md').write_text('different contents')
         git('add','README.md');git('-c','user.name=Test','-c','user.email=test@example.test','commit','-m','changed source')

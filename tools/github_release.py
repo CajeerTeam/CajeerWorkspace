@@ -76,11 +76,11 @@ def check_source(archive, source, commit):
             require(member.isfile() and tar.extractfile(member).read()==data,'Package differs from accepted Git commit: '+name)
 
 
-def public_metadata(bundle, item, key_sha):
+def public_metadata(bundle, item, key_sha, channel='stable'):
     archive=bundle/prod.NAME
     m, matrix_hash=prod.matrix(archive)
     runtime=m['runtime']
-    return {'format':1,'repository':REPO,'channel':'stable','version':prod.VERSION,'tag':'v'+prod.VERSION,
+    return {'format':1,'repository':REPO,'channel':channel,'version':prod.VERSION,'tag':'v'+prod.VERSION,
             'commit':item['summary']['ci_commit'],'schema':item['schema'],
             'supported_from':[{'version':prod.PREVIOUS,'schema':candidate.OLD_SCHEMA,'archive_sha256':item['previous_sha256']}],
             'runtime':{'php_min':runtime['php_min'],'php_max_exclusive':'9.0','architecture':runtime['architecture'],
@@ -92,8 +92,8 @@ def public_metadata(bundle, item, key_sha):
             'release_key_sha256':key_sha,'accepted_at':prod.timestamp(item['summary']['checked_at']).astimezone(dt.timezone.utc).isoformat()}
 
 
-def check_assets(row, tag, paths, draft=True):
-    require(row.get('tag_name')==tag and row.get('draft') is draft and row.get('prerelease') is False,'Unexpected release state')
+def check_assets(row, tag, paths, draft=True, preview=False):
+    require(row.get('tag_name')==tag and row.get('draft') is draft and row.get('prerelease') is preview,'Unexpected release state')
     assets=row.get('assets',[])
     require(len(assets)==len(paths) and {a.get('name') for a in assets}=={p.name for p in paths},'Unexpected release assets')
     expected={p.name:p for p in paths}
@@ -102,7 +102,9 @@ def check_assets(row, tag, paths, draft=True):
         require(a.get('state')=='uploaded' and a.get('size')==p.stat().st_size and a.get('digest')=='sha256:'+recovery.digest(p),'GitHub asset digest or size mismatch: '+p.name)
 
 
-def publish(bundle, registry, pin, private, source, request=api, upload=upload_asset):
+def publish(bundle, registry, pin, private, source, request=api, upload=upload_asset, channel='stable'):
+    require(channel in ('stable','preview'),'Unknown release channel')
+    preview=channel=='preview'
     bundle=recovery.private_dir(bundle)
     # All public files and the private gate are evaluated on a private immutable-in-use snapshot.
     with tempfile.TemporaryDirectory(prefix='workspace-github-') as d:
@@ -112,7 +114,7 @@ def publish(bundle, registry, pin, private, source, request=api, upload=upload_a
         for n in names: recovery.write(stage/n,prod.read(bundle/n,release.MAX_TOTAL if n==prod.NAME else prod.MAX_JSON))
         item=prod.verify(stage,registry,pin);prod.fresh(item)
         entries,keys=prod.trust(registry,pin)
-        meta=public_metadata(stage,item,entries['release']['sha256'])
+        meta=public_metadata(stage,item,entries['release']['sha256'],channel)
         check_source(stage/prod.NAME,source,meta['commit'])
         public=Path(d)/'public';public.mkdir(mode=0o700)
         for n in (prod.NAME,prod.NAME+'.sig'): recovery.write(public/n,(stage/n).read_bytes())
@@ -127,16 +129,16 @@ def publish(bundle, registry, pin, private, source, request=api, upload=upload_a
             require(isinstance(rows,list) and not any(r.get('tag_name')==tag for r in rows),'Release or draft already exists for tag')
             if len(rows)<100: break
         else: raise ValueError('Release inventory too large to safely check for duplicates')
-        row=request('/releases','POST',{'tag_name':tag,'target_commitish':meta['commit'],'name':'CajeerWorkspace '+prod.VERSION,'body':'Signed Workspace distribution. Verify workspace-release.json before use.','draft':True,'prerelease':False})
+        row=request('/releases','POST',{'tag_name':tag,'target_commitish':meta['commit'],'name':'CajeerWorkspace '+prod.VERSION,'body':'Signed Workspace distribution. Verify workspace-release.json before use.','draft':True,'prerelease':preview})
         rid=row.get('id');require(type(rid) is int and rid>0 and row.get('draft') is True and row.get('tag_name')==tag,'Draft not created')
         for path in paths:
             asset=upload(rid,path)
             require(asset.get('name')==path.name and asset.get('state')=='uploaded','Asset upload not confirmed: '+path.name)
-        check_assets(request('/releases/'+str(rid)),tag,paths)
+        check_assets(request('/releases/'+str(rid)),tag,paths,preview=preview)
         check_tag(tag,meta['commit'],request)
         prod.fresh(item)
-        row=request('/releases/'+str(rid),'PATCH',{'draft':False,'prerelease':False,'make_latest':'true'})
-        check_assets(row,tag,paths,False)
+        row=request('/releases/'+str(rid),'PATCH',{'draft':False,'prerelease':preview,'make_latest':'false' if preview else 'true'})
+        check_assets(row,tag,paths,False,preview)
         check_tag(tag,meta['commit'],request)
         return {'status':'published','version':prod.VERSION,'release_id':rid,'commit':meta['commit'],'archive_sha256':meta['package']['sha256']}
 
@@ -144,10 +146,10 @@ def publish(bundle, registry, pin, private, source, request=api, upload=upload_a
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('bundle','trust','private-key','source'):p.add_argument('--'+name,type=Path,required=True)
-    p.add_argument('--trust-sha256',required=True)
+    p.add_argument('--trust-sha256',required=True); p.add_argument('--channel',choices=['stable','preview'],default='stable')
     a=p.parse_args();os.umask(0o077)
     try:
-        print(json.dumps(publish(a.bundle,a.trust,a.trust_sha256,a.private_key,a.source)))
+        print(json.dumps(publish(a.bundle,a.trust,a.trust_sha256,a.private_key,a.source,channel=a.channel)))
     except (ValueError,OSError,KeyError,TypeError,subprocess.SubprocessError,tarfile.TarError) as e:
         print('Publication failed: '+str(e),file=sys.stderr);return 1
     return 0

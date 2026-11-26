@@ -38,6 +38,11 @@ CajeerWorkspace PHP $version
   php bin/workspace user:password EMAIL
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
+  php bin/workspace updates:auto configure /absolute/schedule.json
+  php bin/workspace updates:auto enable|disable|pause|resume|status|run|ack-recovery
+  php bin/workspace updates:auto skip|unskip VERSION
+  php bin/workspace updates:auto approve /absolute/pilot-private.pem
+  php bin/workspace updates:auto revoke METADATA_SHA256
   php bin/workspace updates:check
   php bin/workspace updates:download
   php bin/workspace updates:plan /абсолютный/путь/к/исходному.zip
@@ -111,6 +116,12 @@ try {
     $command = $argv[1] ?? 'help';
     if ($command === 'help' || $command === '--help') { echo helpText(); exit(0); }
     if ($command === 'version') { echo VERSION,PHP_EOL; exit(0); }
+    if($command==='updates:auto'){
+        $args=['python3','-B',ROOT.'/tools/update_schedule.py',...array_slice($argv,2)];
+        $p=proc_open($args,[0=>STDIN,1=>STDOUT,2=>STDERR],$pipes,ROOT);
+        if(!is_resource($p))throw new Problem('Не удалось запустить планировщик.');
+        exit(proc_close($p));
+    }
     if(in_array($command,['updates:install','updates:finish','updates:rollback','updates:status'],true)){
         $args=['python3','-B',ROOT.'/tools/update_install.py',substr($command,8),...array_slice($argv,2)];
         $p=proc_open($args,[0=>STDIN,1=>STDOUT,2=>STDERR],$pipes,ROOT);

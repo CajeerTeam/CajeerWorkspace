@@ -27,7 +27,7 @@ class InstallTests(unittest.TestCase):
         cls.t=tempfile.TemporaryDirectory(); cls.addClassCleanup(cls.t.cleanup); cls.base=Path(cls.t.name)
         actual=os.getenv('WORKSPACE_PREVIOUS_RELEASE')
         current=(ROOT/'VERSION').read_text().strip()
-        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else '1.2.3'
+        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else '1.2.4'
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub'; cls.sig=cls.base/'sig'
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',cls.key],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',cls.key,'-pubout','-out',cls.pub],check=True,capture_output=True)
@@ -73,6 +73,21 @@ class InstallTests(unittest.TestCase):
         r=self.run_action('install');self.assertEqual(r['status'],'switched');self.assertEqual(ui.current(self.root),self.target)
         self.assertTrue((self.data/'update-maintenance.json').exists());self.assertEqual(recovery.sqlite_snapshot(self.db,self.objects),self.before)
         self.assertEqual(self.run_action('finish')['status'],'completed');self.assertFalse((self.data/'update-maintenance.json').exists());self.assertEqual(self.journal()['phase'],'completed')
+    def test_scheduler_uses_real_installer(self):
+        import update_schedule as sched
+        c={'root':str(self.root),'archive_dir':str(self.previous.parent),'approval_dir':str(self.p),'role':'pilot','channel':'stable','timezone':'UTC','days':[1,2,3,4,5,6,7],'start':'00:00','end':'23:59','hooks':{},'stop_units':[],'pg_restore_database':None}
+        state=sched.default_state();state['enabled']=True
+        report=ui.read_json(self.state/'report.json');report['package_result']['metadata_sha256']=recovery.sha(recovery.canonical(self.m));ui.atomic_json(self.state/'report.json',report,0o640)
+        calls=[]
+        def cli(c,env,fd,action,*args):
+            calls.append(action);return {**report,'status':{'check':'compatible','download':'downloaded','plan':'planned'}[action]}
+        def hook(c,name,info,env=None):calls.append(name)
+        with patch.object(sched,'config',return_value=c),patch.object(sched,'in_window',return_value=True),patch.object(sched,'cli',side_effect=cli),patch.object(sched,'hook',side_effect=hook):
+            with ui.exclusive(self.state/'schedule.lock') as fd:
+                self.assertEqual(sched.run(self.state,state,c,fd,'e'*64)['status'],'pilot_healthy')
+        self.assertEqual(calls,['check','download','plan','quiesce','start','health','open']);self.assertEqual(ui.current(self.root),self.target)
+        self.assertEqual(self.journal()['phase'],'completed');self.assertEqual(recovery.sqlite_snapshot(self.db,self.objects),self.before)
+        self.assertFalse((self.data/'update-maintenance.json').exists());self.assertIsNotNone(sched.load(self.state)['healthy'])
     def test_resume_after_switch_failure(self):
         with patch.object(ui,'switch',side_effect=OSError('injected')):
             with self.assertRaises(OSError):self.run_action('install')
@@ -146,7 +161,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.run_action('install')['status'],'switched');self.assertTrue(self.journal()['pg_restore_verified'])
         self.assertEqual(self.run_action('finish')['status'],'completed');self.assertEqual(recovery.pg_snapshot(self.objects,self.data),before)
     def test_forward_schema(self):
-        # A separately signed future fixture exercises the migration path, not a production schema change in 1.2.2.
+        # A separately signed future fixture exercises the migration path, not a production schema change in 1.2.3.
         with zipfile.ZipFile(self.archive) as z: files={n:z.read(n) for n in z.namelist() if n!='SHA256SUMS'}
         files['app/Core.php']=files['app/Core.php'].replace(b'const SCHEMA_VERSION = 36;',b'const SCHEMA_VERSION = 37;')
         old_freeze=release.sha(files['database/schema-freeze.json']); freeze=json.loads(files['database/schema-freeze.json']);freeze['schema']=37

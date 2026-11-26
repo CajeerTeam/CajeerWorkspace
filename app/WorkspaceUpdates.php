@@ -75,12 +75,12 @@ function updateCanonical(array $obj): string {
     };
     return json_encode($normalize($obj),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES);
 }
-function updateManifest(string $raw,string $signature,string $pem,string $pin,string $version,string $commit): array {
+function updateManifest(string $raw,string $signature,string $pem,string $pin,string $version,string $commit,string $channel='stable'): array {
     updateAssert(strlen($raw)<=65536&&strlen($signature)>0&&strlen($signature)<=16384&&hash_equals($pin,hash('sha256',$pem))&&openssl_verify($raw,$signature,$pem,OPENSSL_ALGO_SHA256)===1,'Подпись метаданных не подтверждена.');
     $m=updateJson($raw);
     updateAssert(hash_equals(updateCanonical($m),$raw),'Неканонический JSON метаданных или повторяющиеся поля.');
     updateAssert(updateFields($m,['format','repository','channel','version','tag','commit','schema','supported_from','runtime','package','matrix_sha256','acceptance_sha256','release_key_sha256','accepted_at']),'Неподдерживаемый формат метаданных.');
-    updateAssert($m['format']===1&&$m['repository']===UPDATE_REPO&&$m['channel']==='stable'&&updateVersion($m['version'])&&$m['version']===$version&&$m['tag']==='v'.$version&&$m['commit']===$commit&&preg_match('/\A[a-f0-9]{40}\z/',$commit)===1&&$m['release_key_sha256']===$pin,'Метаданные не соответствуют репозиторию, тегу или ключу.');
+    updateAssert($m['format']===1&&$m['repository']===UPDATE_REPO&&in_array($channel,['stable','preview'],true)&&$m['channel']===$channel&&updateVersion($m['version'])&&$m['version']===$version&&$m['tag']==='v'.$version&&$m['commit']===$commit&&preg_match('/\A[a-f0-9]{40}\z/',$commit)===1&&$m['release_key_sha256']===$pin,'Метаданные не соответствуют репозиторию, тегу или ключу.');
     updateAssert(is_int($m['schema'])&&$m['schema']>=1&&$m['schema']<=999&&updateHex($m['matrix_sha256'])&&updateHex($m['acceptance_sha256'])&&is_string($m['accepted_at'])&&preg_match('/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\z/',$m['accepted_at'])===1&&strtotime($m['accepted_at'])!==false,'Некорректная схема или подтверждение допуска.');
     $p=$m['package'];updateAssert(updateFields($p,['name','size','sha256','signature_sha256'])&&$p['name']==='CajeerWorkspace-'.$version.'.zip'&&is_int($p['size'])&&$p['size']>0&&$p['size']<=134217728&&updateHex($p['sha256'])&&updateHex($p['signature_sha256']),'Некорректное описание пакета.');
     $r=$m['runtime'];updateAssert(updateFields($r,['php_min','php_max_exclusive','architecture','sqlite_min','postgres_min','python_min','extensions']),'Некорректные требования среды.');
@@ -116,26 +116,27 @@ function updateAsset(array $row,string $name,int $limit): array {
     updateAssert(count($matches)===1,'Отсутствующий или неоднозначный asset: '.$name);$a=$matches[0];
     updateAssert(($a['state']??null)==='uploaded'&&is_int($a['size']??null)&&$a['size']>0&&$a['size']<=$limit&&is_string($a['digest']??null)&&preg_match('/\Asha256:[a-f0-9]{64}\z/',$a['digest'])===1,'Некорректный asset: '.$name);return $a;
 }
-function updateDiscover(array $env,string $pem,string $pin,?callable $http=null,?callable $capture=null): array {
+function updateDiscover(array $env,string $pem,string $pin,?callable $http=null,?callable $capture=null,string $channel='stable'): array {
+    updateAssert(in_array($channel,['stable','preview'],true),'Неизвестный канал обновлений.');
     $deadline=microtime(true)+22;
     $http??=static fn($url,$limit,$asset)=>updateHttp($url,$limit,$asset,$deadline);$best=null;$version=null;$seen=[];
     for($page=1;$page<=3;$page++){
         $rows=updateJson($http(UPDATE_API.'/releases?per_page=100&page='.$page,2097152,false));updateAssert(array_is_list($rows),'Некорректный список релизов.');
-        foreach($rows as $row){if(!is_array($row)||($row['draft']??null)!==false||($row['prerelease']??null)!==false)continue;$tag=$row['tag_name']??null;
+        foreach($rows as $row){if(!is_array($row)||($row['draft']??null)!==false||(!is_bool($row['prerelease']??null)||($channel==='stable'&&$row['prerelease'])))continue;$tag=$row['tag_name']??null;
             if(!is_string($tag)||!str_starts_with($tag,'v')||!updateVersion(substr($tag,1)))continue;$v=substr($tag,1);
-            updateAssert(!isset($seen[$v]),'Неоднозначный стабильный выпуск.');$seen[$v]=true;
+            updateAssert(!isset($seen[$v]),'Неоднозначный выпуск.');$seen[$v]=true;
             if($version===null||version_compare($v,$version,'>')){$best=$row;$version=$v;}
         }
         if(count($rows)<100)break;updateAssert($page<3,'Список релизов превышает предел проверки.');
     }
-    if(!$best)return ['status'=>'empty','reasons'=>['Нет опубликованных стабильных выпусков.']];
+    if(!$best)return ['status'=>'empty','reasons'=>['Нет опубликованных выпусков выбранного канала.']];
     $name='CajeerWorkspace-'.$version.'.zip';$tag='v'.$version;
     $ref=updateJson($http(UPDATE_API.'/git/ref/tags/'.$tag,65536,false));$commit=$ref['object']['sha']??'';
     updateAssert(($ref['ref']??null)==='refs/tags/'.$tag&&($ref['object']['type']??null)==='commit'&&is_string($commit)&&preg_match('/\A[a-f0-9]{40}\z/',$commit)===1,'Тег не указывает непосредственно на коммит.');
     $base='https://github.com/'.UPDATE_REPO.'/releases/download/'.$tag.'/';
     $download=static function(string $n,int $limit)use($best,$http,$base){$a=updateAsset($best,$n,$limit);$b=$http($base.$n,$limit,true);updateAssert(strlen($b)===$a['size']&&hash_equals($a['digest'],'sha256:'.hash('sha256',$b)),'Изменённый asset: '.$n);return $b;};
     $raw=$download(UPDATE_META,65536);$signature=$download(UPDATE_META.'.sig',16384);
-    $m=updateManifest($raw,$signature,$pem,$pin,$version,$commit);
+    $m=updateManifest($raw,$signature,$pem,$pin,$version,$commit,$best['prerelease']?'preview':'stable');
     $p=updateAsset($best,$name,134217728);$s=updateAsset($best,$name.'.sig',16384);
     updateAssert($p['size']===$m['package']['size']&&hash_equals($p['digest'],'sha256:'.$m['package']['sha256'])&&hash_equals($s['digest'],'sha256:'.$m['package']['signature_sha256']),'Пакет или подпись не соответствуют подписанным метаданным.');
     if($capture!==null)$capture($raw,$signature,$s['size']);
@@ -163,4 +164,16 @@ function updateStoredReport(int $schema): ?array {
         if(!is_string($r['status']??null)||!is_array($r['reasons']??null)||!in_array($r['operation']??null,['check','download','plan','install'],true))return null;
         return $r;
     } catch(\Throwable){return null;}
+}
+
+function updateScheduleReport(): ?array {
+    try {
+        $path=updateStateDirectory().'/schedule-report.json';
+        if(!is_file($path)||is_link($path)||((fileperms($path)?:0)&0027)!==0)return null;
+        $raw=file_get_contents($path,false,null,0,65537);
+        if(!is_string($raw)||strlen($raw)>65536)return null;
+        $r=updateJson($raw);
+        if(!is_bool($r['enabled']??null)||!is_bool($r['paused']??null)||!is_bool($r['pending']??null)||!is_string($r['status']??null)||!is_array($r['events']??null)||!is_array($r['skipped']??null))return null;
+        return $r;
+    }catch(\Throwable){return null;}
 }

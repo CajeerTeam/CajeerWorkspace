@@ -25,7 +25,7 @@ class Updates(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory(); cls.addClassCleanup(cls.tmp.cleanup)
         cls.base=Path(cls.tmp.name); cls.previous=release.build(cls.base/'previous')
-        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.2.3'; cls.schema=36
+        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.2.4'; cls.schema=36
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub';
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',str(cls.key)],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',str(cls.key),'-pubout','-out',str(cls.pub)],check=True,capture_output=True)
@@ -114,7 +114,7 @@ class Updates(unittest.TestCase):
 
     def test_allowlist_and_stream(self):
         url=f'https://github.com/{u.REPO}/releases/download/v{self.version}/{self.target.name}'
-        for bad in ['http://github.com/x','https://github.com.evil/x','https://github.com:443/x','https://evil@github.com/x','https://github.com/else/repo/releases/download/v1.2.3/CajeerWorkspace-1.2.3.zip','https://release-assets.githubusercontent.com/x']:
+        for bad in ['http://github.com/x','https://github.com.evil/x','https://github.com:443/x','https://evil@github.com/x','https://github.com/else/repo/releases/download/v1.2.4/CajeerWorkspace-1.2.4.zip','https://release-assets.githubusercontent.com/x']:
             self.assertFalse(u.allowed(bad,True),bad)
         class Response(io.BytesIO):
             status=200;headers={}

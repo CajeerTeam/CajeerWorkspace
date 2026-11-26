@@ -29,6 +29,18 @@ function updatePackageProcess(string $action,string $store,array $envelope,?stri
     return $out;
 }
 function updateCli(PDO $db,string $action,?string $previous=null): array {
+    $dir=updateStateDirectory();$path=$dir.'/schedule.lock';
+    updateAssert(!is_link($path)&&(!file_exists($path)||is_file($path)),'Небезопасная блокировка планировщика.');
+    $lock=fopen($path,'c+');updateAssert(is_resource($lock),'Не удалось открыть блокировку планировщика.');
+    try {
+        if(!flock($lock,LOCK_EX|LOCK_NB)){
+            $token=getenv('WORKSPACE_UPDATE_SCHEDULE_TOKEN')?:'';
+            updateAssert(updateHex($token)&&hash_equals($token,stream_get_contents($lock,65)),'Планировщик выполняет операцию.');
+        }
+        return updateCliLocked($db,$action,$previous);
+    } finally {fclose($lock);}
+}
+function updateCliLocked(PDO $db,string $action,?string $previous=null): array {
     updateAssert(PHP_SAPI==='cli'&&in_array($action,['check','download','plan'],true),'Неверная команда обновления.');
     $dir=updateStateDirectory();$store=$dir.'/packages';
     updateAssert(is_writable($dir),'Каталог отчётов недоступен для записи.');
@@ -44,12 +56,14 @@ function updateCli(PDO $db,string $action,?string $previous=null): array {
             $raw=file_get_contents($journal,false,null,0,1048577);updateAssert(is_string($raw)&&strlen($raw)<=1048576,'Некорректный журнал установки.');
             $j=updateJson($raw);updateAssert(in_array($j['phase']??null,['completed','rolled_back'],true),'Незавершённая установка: сначала завершите восстановление.');
         }
-        $report=['checked_at'=>gmdate('c'),'installed_version'=>VERSION,'installed_schema'=>schemaVersion($db),'trust_pin'=>getenv('WORKSPACE_UPDATE_KEY_SHA256')?:'','operation'=>$action,'status'=>'running','reasons'=>['CLI выполняет проверку.']];
+        $report=['checked_at'=>gmdate('c'),'installed_version'=>VERSION,'installed_schema'=>schemaVersion($db),'trust_pin'=>getenv('WORKSPACE_UPDATE_KEY_SHA256')?:'','operation'=>$action,'channel'=>getenv('WORKSPACE_UPDATE_CHANNEL')?:'stable','status'=>'running','reasons'=>['CLI выполняет проверку.']];
         updateWriteReport($dir,$report);
         try {
             [$pem,$pin]=updateKey();$env=updateEnvironment($db);$envelope=null;
-            $report=array_replace($report,updateDiscover($env,$pem,$pin,null,static function($raw,$sig,$size)use(&$envelope,$pem,$env){$envelope=['metadata'=>base64_encode($raw),'signature'=>base64_encode($sig),'key'=>base64_encode($pem),'signature_size'=>$size,'environment'=>$env];}));
+            $report=array_replace($report,updateDiscover($env,$pem,$pin,null,static function($raw,$sig,$size)use(&$envelope,$pem,$env){$envelope=['metadata'=>base64_encode($raw),'signature'=>base64_encode($sig),'key'=>base64_encode($pem),'signature_size'=>$size,'environment'=>$env];},$report['channel']));
             if($action!=='check'){
+                $expected=getenv('WORKSPACE_UPDATE_EXPECTED_METADATA')?:'';
+                if($expected!=='')updateAssert($envelope!==null&&updateHex($expected)&&hash_equals($expected,hash('sha256',base64_decode($envelope['metadata'],true))),'Выпуск изменился после проверки.');
                 updateAssert($report['status']==='compatible'&&$envelope!==null,'Для скачивания или плана требуется подтверждённый совместимый новый выпуск.');
                 if($action==='plan')updateAssert(is_string($previous)&&str_starts_with($previous,'/')&&is_file($previous)&&!is_link($previous),'Укажите абсолютный путь к точному исходному ZIP.');
                 $report['package_result']=updatePackageProcess($action,$store,$envelope,$previous);

@@ -157,7 +157,7 @@ def run(action, store, envelope, previous=None, downloader=fetch, root=release.R
     raw=base64.b64decode(envelope['metadata'],validate=True); sig=base64.b64decode(envelope['signature'],validate=True); pem=base64.b64decode(envelope['key'],validate=True)
     require(0<len(raw)<=65536 and 0<len(sig)<=16384 and 0<len(pem)<=16384,'Invalid input sizes')
     m=json.loads(raw); p=m['package']; version=m['version']; env=envelope['environment']
-    require(VERSION.fullmatch(version) and m['repository']==REPO and m['channel']=='stable' and m['tag']=='v'+version and p['name']=='CajeerWorkspace-'+version+'.zip' and HEX.fullmatch(p['sha256']) and HEX.fullmatch(p['signature_sha256']) and type(p['size']) is int and 0<p['size']<=LIMIT and hashlib.sha256(pem).hexdigest()==m['release_key_sha256'], 'Invalid signed package identity')
+    require(VERSION.fullmatch(version) and m['repository']==REPO and m['channel'] in ('stable','preview') and m['tag']=='v'+version and p['name']=='CajeerWorkspace-'+version+'.zip' and HEX.fullmatch(p['sha256']) and HEX.fullmatch(p['signature_sha256']) and type(p['size']) is int and 0<p['size']<=LIMIT and hashlib.sha256(pem).hexdigest()==m['release_key_sha256'], 'Invalid signed package identity')
     require(sys.version_info[:3]>=tuple(int(x) for x in m['runtime']['python_min'].split('.')), 'Python version below signed minimum')
     require(store.is_absolute() and store.resolve()==store and store.is_dir() and not store.stat().st_mode & 0o077,'Unsafe private package store')
     require(type(envelope['signature_size']) is int and 0<envelope['signature_size']<=16384, 'Invalid package signature size')

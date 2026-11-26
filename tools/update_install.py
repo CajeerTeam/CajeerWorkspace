@@ -133,7 +133,7 @@ def php(folder, args, env, fds):
 
 def environment(folder, env, fds, raw=None, sig=None, key=None, m=None):
     # Use the verified current release's own PHP checks, not a caller-supplied runtime description.
-    code=r'''require $argv[1].'/app/bootstrap.php'; $db=\Workspace\database(); $env=\Workspace\updateEnvironment($db); if($argc>2){[$pem,$pin]=\Workspace\updateKey(); $raw=file_get_contents($argv[2]); $sig=file_get_contents($argv[3]); $m=json_decode($raw,true,32,JSON_THROW_ON_ERROR); $m=\Workspace\updateManifest($raw,$sig,$pem,$pin,$m['version'],$m['commit']); $c=\Workspace\updateCompatibility($m,$env); if($c['status']!=='compatible')throw new RuntimeException('Incompatible environment');} echo json_encode($env,JSON_THROW_ON_ERROR);'''
+    code=r'''require $argv[1].'/app/bootstrap.php'; $db=\Workspace\database(); $env=\Workspace\updateEnvironment($db); if($argc>2){[$pem,$pin]=\Workspace\updateKey(); $raw=file_get_contents($argv[2]); $sig=file_get_contents($argv[3]); $m=json_decode($raw,true,32,JSON_THROW_ON_ERROR); $m=\Workspace\updateManifest($raw,$sig,$pem,$pin,$m['version'],$m['commit'],$m['channel']); $c=\Workspace\updateCompatibility($m,$env); if($c['status']!=='compatible')throw new RuntimeException('Incompatible environment');} echo json_encode($env,JSON_THROW_ON_ERROR);'''
     args=['php','-r',code,folder]
     if raw is not None: args.extend([raw,sig])
     return json.loads(command(args,env,fds,120))
@@ -227,12 +227,12 @@ def install(args):
         if not rolling:
             folder=directory(store/j['package_sha256'],True); raw=folder/pkg.META; sig=folder/(pkg.META+'.sig')
             pkg.regular(raw,65536); pkg.verify_signature(raw,sig,key); m=read_json(raw,65536)
-            require(recovery.digest(raw)==j['metadata_sha256'] and m['repository']==pkg.REPO and m['channel']=='stable' and m['tag']=='v'+j['target'] and m['version']==j['target'] and m['schema']==j['target_schema'] and m['release_key_sha256']==pin and m['package']['sha256']==j['package_sha256'] and m['package']['name']=='CajeerWorkspace-'+j['target']+'.zip','Signed release identity differs')
+            require(recovery.digest(raw)==j['metadata_sha256'] and m['repository']==pkg.REPO and m['channel'] in ('stable','preview') and m['tag']=='v'+j['target'] and m['version']==j['target'] and m['schema']==j['target_schema'] and m['release_key_sha256']==pin and m['package']['sha256']==j['package_sha256'] and m['package']['name']=='CajeerWorkspace-'+j['target']+'.zip','Signed release identity differs')
             require(tuple(map(int,j['target'].split('.')))>tuple(map(int,j['source'].split('.'))) and j['source_schema']<=j['target_schema'] and any(s=={'version':j['source'],'schema':j['source_schema'],'archive_sha256':identity['previous_sha256']} for s in m['supported_from']),'Unsupported signed transition')
             require(sys.version_info[:3]>=tuple(map(int,m['runtime']['python_min'].split('.'))),'Python below signed minimum')
             archive=folder/m['package']['name']; pkg.package_check(folder,m,raw.read_bytes(),sig.read_bytes(),key); new_hash=payload(archive,j['target'],j['target_schema'])
             require(all(new_hash.get(n)==h for n,h in old_hash.items() if n.startswith('database/') and n.endswith('.sql')),'Previously shipped migrations changed')
-            manifest_code=r'''require $argv[1].'/app/bootstrap.php'; [$pem,$pin]=\Workspace\updateKey(); $raw=file_get_contents($argv[2]); $m=json_decode($raw,true,32,JSON_THROW_ON_ERROR); \Workspace\updateManifest($raw,file_get_contents($argv[3]),$pem,$pin,$m['version'],$m['commit']);'''; command(['php','-r',manifest_code,old,raw,sig],env,(update_fd,),120)
+            manifest_code=r'''require $argv[1].'/app/bootstrap.php'; [$pem,$pin]=\Workspace\updateKey(); $raw=file_get_contents($argv[2]); $m=json_decode($raw,true,32,JSON_THROW_ON_ERROR); \Workspace\updateManifest($raw,file_get_contents($argv[3]),$pem,$pin,$m['version'],$m['commit'],$m['channel']);'''; command(['php','-r',manifest_code,old,raw,sig],env,(update_fd,),120)
         require(current(root) in (j['source'],j['target']),'Unexpected active release')
         if fresh:
             environment(old,env,(update_fd,),raw,sig,key,m)
@@ -305,7 +305,8 @@ def main():
         if a.action=='status':
             j=read_json(directory(Path(os.environ['WORKSPACE_UPDATE_STATE_DIR']))/'packages'/'install.json'); print(json.dumps({k:v for k,v in j.items() if k not in ('token','pg_identity')},indent=2)); return 0
         require(all(x is not None for x in (a.root,a.previous,a.data,a.objects)),'Provide root, previous, data and objects')
-        print(json.dumps(install(a),indent=2)); return 0
+        with exclusive(directory(Path(os.environ['WORKSPACE_UPDATE_STATE_DIR']))/'schedule.lock'):
+            print(json.dumps(install(a),indent=2)); return 0
     except (OSError,ValueError,KeyError,TypeError,RuntimeError,subprocess.SubprocessError,zipfile.BadZipFile) as e:
         print(json.dumps({'status':'failed','reason':str(e)[:400],'instruction':'Keep writers stopped; inspect status and journal; never remove maintenance marker manually.'}),file=sys.stderr); return 1
 
