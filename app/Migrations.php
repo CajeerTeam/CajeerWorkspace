@@ -47,6 +47,7 @@ function schemaVersion(PDO $db): int {
 }
 
 function openDatabase(bool $install=false): PDO {
+    updateWriterLease();
     requireRuntime();
     if (postgresSelected()) return postgresConnect();
     if (getenv('WORKSPACE_DB') && getenv('WORKSPACE_DB')!=='sqlite') throw new Problem('Неизвестный WORKSPACE_DB.',503);

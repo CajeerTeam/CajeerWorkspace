@@ -160,7 +160,7 @@ function updateStoredReport(int $schema): ?array {
         try{updateKey();}catch(\Throwable){if(($r['status']??null)!=='failed'||isset($r['release'])||isset($r['package_result']))return null;}
         $time=strtotime(is_string($r['checked_at']??null)?$r['checked_at']:'');
         if($time===false||$time>time()+60||$time<time()-86400)return null;
-        if(!is_string($r['status']??null)||!is_array($r['reasons']??null)||!in_array($r['operation']??null,['check','download','plan'],true))return null;
+        if(!is_string($r['status']??null)||!is_array($r['reasons']??null)||!in_array($r['operation']??null,['check','download','plan','install'],true))return null;
         return $r;
     } catch(\Throwable){return null;}
 }

@@ -147,10 +147,10 @@ def plan(folder, m, raw, sig, key, previous, env, root):
     for n,h in old.items():
         path=root/n
         require(not any(p.is_symlink() for p in [path,*path.parents] if p!=root and root in p.parents) and path.is_file() and release.file_sha(path)==h, 'Installed distribution differs: '+n)
-    return {'status':'planned','previous_sha256':sources[0]['archive_sha256'], 'source_schema':env['schema'],'target_schema':m['schema'],
+    return {'status':'planned','target_version':m['version'],'target_sha256':m['package']['sha256'],'metadata_sha256':release.sha(raw),'previous_sha256':sources[0]['archive_sha256'], 'source_schema':env['schema'],'target_schema':m['schema'],
             'added':len(target.keys()-old.keys()),'removed':len(old.keys()-target.keys()),'changed':sum(target[n]!=old[n] for n in target.keys()&old.keys()),
             'pending_migrations':list(range(env['schema']+1,m['schema']+1)), 'python':'.'.join(map(str,sys.version_info[:3])), 'installation_performed':False,
-            'required_actions':['Остановить все процессы записи и workers; установить блокировку обслуживания.','Создать и проверить резервные копии БД и файловых объектов.','Перед установкой повторно проверить среду, доверие, выпуск и исходный дистрибутив.','Применять утверждённый офлайн-регламент; проверить сервис и восстановление.']}
+            'required_actions':['Остановить все процессы записи и workers; установить блокировку обслуживания.','Создать и проверить резервные копии БД и файловых объектов.','Перед установкой повторно проверить среду, доверие, выпуск и исходный дистрибутив.','Запустить ручную установку по этому плану, проверить сервис и восстановление.']}
 
 
 def run(action, store, envelope, previous=None, downloader=fetch, root=release.ROOT):

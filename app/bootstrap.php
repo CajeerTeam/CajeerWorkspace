@@ -4,6 +4,7 @@ declare(strict_types=1);
 date_default_timezone_set('UTC');
 umask(0077);
 require_once __DIR__ . '/Core.php';
+require_once __DIR__ . '/UpdateMaintenance.php';
 require_once __DIR__ . '/Organizations.php';
 require_once __DIR__ . '/Permissions.php';
 require_once __DIR__ . '/Payments.php';

@@ -5,6 +5,7 @@ use PDO;
 
 function postgresSelected(): bool { return getenv('WORKSPACE_DB')==='pgsql'; }
 function postgresConnect(): PDO {
+    updateWriterLease();
     if (!extension_loaded('pdo_pgsql')) throw new Problem('Не установлено расширение pdo_pgsql.',503);
     $values=['host'=>getenv('PGHOST')?:'localhost','port'=>getenv('PGPORT')?:'5432','dbname'=>getenv('PGDATABASE')?:'', 'sslmode'=>getenv('PGSSLMODE')?:'verify-full'];
     foreach ($values as $v) if ($v==='' || preg_match('/[;\s\x00-\x1f\'"\\\\]/',$v)) throw new Problem('Проверьте PGHOST, PGPORT, PGDATABASE, PGSSLMODE.',503);

@@ -15,7 +15,7 @@ function updateWriteReport(string $dir,array $report): void {
 }
 function updatePackageProcess(string $action,string $store,array $envelope,?string $previous): array {
     updateAssert(PHP_SAPI==='cli','Операция доступна только в CLI.');
-    $args=['python3',ROOT.'/tools/update_package.py',$action,$store];if($previous!==null)$args[]=$previous;
+    $args=['python3','-B',ROOT.'/tools/update_package.py',$action,$store];if($previous!==null)$args[]=$previous;
     $p=proc_open($args,[0=>['pipe','r'],1=>['pipe','w'],2=>['file','/dev/null','a']],$pipes,ROOT,['PATH'=>getenv('PATH')?:'/usr/local/bin:/usr/bin:/bin','LANG'=>'C.UTF-8']);
     updateAssert(is_resource($p),'Не удалось запустить проверяющий процесс.');
     try {
@@ -38,6 +38,12 @@ function updateCli(PDO $db,string $action,?string $previous=null): array {
     $lock=fopen($lockPath,'c');updateAssert(is_resource($lock),'Не удалось открыть блокировку.');
     try {
         updateAssert(flock($lock,LOCK_EX|LOCK_NB),'Другая операция обновления выполняется.');
+        $journal=$store.'/install.json';
+        if(file_exists($journal)||is_link($journal)){
+            updateAssert(is_file($journal)&&!is_link($journal),'Небезопасный журнал установки.');
+            $raw=file_get_contents($journal,false,null,0,1048577);updateAssert(is_string($raw)&&strlen($raw)<=1048576,'Некорректный журнал установки.');
+            $j=updateJson($raw);updateAssert(in_array($j['phase']??null,['completed','rolled_back'],true),'Незавершённая установка: сначала завершите восстановление.');
+        }
         $report=['checked_at'=>gmdate('c'),'installed_version'=>VERSION,'installed_schema'=>schemaVersion($db),'trust_pin'=>getenv('WORKSPACE_UPDATE_KEY_SHA256')?:'','operation'=>$action,'status'=>'running','reasons'=>['CLI выполняет проверку.']];
         updateWriteReport($dir,$report);
         try {
