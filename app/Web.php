@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections','logs'=>'connections','logs.export'=>'connections','bots'=>'connections','incidents'=>'connections'];
 
 function h(mixed $value): string {
@@ -149,6 +149,12 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'reliability.reconcile':
+            $pid=$projectId();$result=relReconcile($db,$user,$pid);$_SESSION['notice']='Сверка поставлена в очередь: '.json_encode($result,JSON_THROW_ON_ERROR);go('reliability',['project'=>$pid]);
+        case 'reliability.verify':
+            $pid=$projectId();$status=relLogsVerify($db,$user,$pid,numberId($_POST['id']??0));$_SESSION['notice']=$status==='delivered'?'Событие найдено и подтверждено.':'Событие не найдено; это не доказывает отсутствие доставки.';go('reliability',['project'=>$pid]);
+        case 'reliability.retry':
+            $pid=$projectId();relRetry($db,$user,$pid,choice($_POST['provider']??'',REL_PROVIDERS),numberId($_POST['id']??0));$_SESSION['notice']='Задание поставлено на безопасную обработку.';go('reliability',['project'=>$pid]);
         case 'reminder.subscribe':
             $pid=$projectId();$lead=(int)choice($_POST['lead']??'',array_combine(array_map('strval',range(0,90)),range(0,90)));reminderSubscribe($db,$user,$pid,word($_POST['kind']??'',32,'Тип'),$lead,choice($_POST['assigned']??'',['0'=>'','1'=>''])==='1',choice($_POST['enable']??'',['0'=>'','1'=>''])==='1',mfaFresh());go('notifications',['project'=>$pid]);
         case 'reminder.mark':
@@ -444,6 +450,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'reliability':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=relPage($db,$user,$projectId,optionalId($_GET['before']??''));break;
         case 'incidents':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=incidentPage($db,$user,$projectId,$_GET);break;
         case 'bots':

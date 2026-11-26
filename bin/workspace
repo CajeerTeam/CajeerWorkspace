@@ -30,7 +30,7 @@ function passwordInput(): string {
 
 function helpText(): string {
     return <<<HELP
-CajeerWorkspace PHP 0.8.2
+CajeerWorkspace PHP 0.8.4
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE
@@ -69,6 +69,11 @@ CajeerWorkspace PHP 0.8.2
   php bin/workspace lite:work JOB_ID
   php bin/workspace lite:restore JOB_ID --offline
   php bin/workspace lite:reconcile JOB_ID [--offline]
+  php bin/workspace reliability:work [LIMIT]
+  php bin/workspace reliability:reconcile PROJECT_ID OWNER_ID
+  php bin/workspace reliability:retry PROJECT_ID OWNER_ID PROVIDER JOB_ID
+  php bin/workspace reliability:verify PROJECT_ID OWNER_ID LOG_JOB_ID
+  php bin/workspace reliability:rate PROVIDER JOBS_PER_MINUTE
   php bin/workspace bots:tick [LIMIT]
   php bin/workspace logs:tick [LIMIT]
   php bin/workspace incidents:scan PROJECT_ID OWNER_ID
@@ -143,6 +148,16 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'reliability:work':
+            if($argc>3)throw new Problem('Формат: reliability:work [LIMIT]');echo json_encode(relWork($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
+        case 'reliability:reconcile': case 'reliability:retry':
+            if($argc!==($command==='reliability:retry'?6:4))throw new Problem('Формат: reliability:reconcile PROJECT_ID OWNER_ID | reliability:retry PROJECT_ID OWNER_ID PROVIDER JOB_ID');
+            $pid=numberId($argv[2]);$p=entity($db,'SELECT organization_id FROM projects WHERE id=?',[$pid]);$actor=organizationUser($db,['id'=>numberId($argv[3])],(int)$p['organization_id']);
+            if($command==='reliability:retry'){relRetry($db,$actor,$pid,$argv[4],numberId($argv[5]));echo "Queued\n";}else echo json_encode(relReconcile($db,$actor,$pid),JSON_THROW_ON_ERROR),PHP_EOL;break;
+        case 'reliability:verify':
+            if($argc!==5)throw new Problem('Формат: reliability:verify PROJECT_ID OWNER_ID LOG_JOB_ID');$pid=numberId($argv[2]);$p=entity($db,'SELECT organization_id FROM projects WHERE id=?',[$pid]);$actor=organizationUser($db,['id'=>numberId($argv[3])],(int)$p['organization_id']);echo relLogsVerify($db,$actor,$pid,numberId($argv[4])),PHP_EOL;break;
+        case 'reliability:rate':
+            if($argc!==4)throw new Problem('Формат: reliability:rate PROVIDER JOBS_PER_MINUTE');relSetRate($db,$argv[2],numberId($argv[3]));echo "Rate configured\n";break;
         case 'bots:tick':
             if($argc>3)throw new Problem('Формат: bots:tick [LIMIT]');echo json_encode(botsTick($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'logs:tick':

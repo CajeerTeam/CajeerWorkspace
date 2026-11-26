@@ -256,10 +256,11 @@ function ghWebhook(PDO $db): never {
 function ghClaim(PDO $db): ?array {
     return atomic($db,function()use($db){
         $now=time();
+        foreach(query($db,"SELECT j.id,j.attempts,r.project_id FROM github_jobs j JOIN github_repositories r ON r.id=j.repository_binding WHERE j.state='running' AND j.lease_until<=?",[$now])->fetchAll() as $expired)relOutcome($db,(int)$expired['project_id'],'github',(int)$expired['id'],(int)$expired['attempts']>=GH_ATTEMPTS?'dead':'retry','lease_expired');
         query($db,"UPDATE github_jobs SET state=CASE WHEN attempts>=? THEN 'dead' ELSE 'pending' END,claim=NULL,lease_until=NULL,available_at=?,finished_at=CASE WHEN attempts>=? THEN ? ELSE NULL END,last_error='Истёк срок аренды worker' WHERE state='running' AND lease_until<=?",[GH_ATTEMPTS,$now,GH_ATTEMPTS,$now,$now]);
         // Do not allow two workers to publish out-of-order snapshots for the same repository.
         $job=query($db,"SELECT j.* FROM github_jobs j JOIN github_repositories r ON r.id=j.repository_binding WHERE j.state='pending' AND j.available_at<=? AND r.active=1 AND r.generation=j.generation AND NOT EXISTS(SELECT 1 FROM github_jobs x WHERE x.repository_binding=j.repository_binding AND x.state='running') ORDER BY j.id LIMIT 1",[$now])->fetch();
-        if(!$job)return null;
+        if(!$job||!relRate($db,'github',$now))return null;
         $claim=bin2hex(random_bytes(24));
         query($db,"UPDATE github_jobs SET state='running',claim=?,lease_until=?,attempts=attempts+1 WHERE id=?",[$claim,$now+GH_LEASE,$job['id']]);
         return entity($db,'SELECT * FROM github_jobs WHERE id=?',[$job['id']]);
@@ -278,7 +279,7 @@ function ghFinish(PDO $db,array $job,?array $access,?array $snapshot,?\Throwable
         if($access!==null) query($db,"UPDATE github_repositories SET full_name=?,checked_at=?,last_error='' WHERE id=?",[$access['name'],$now,$repo['id']]);
         if($error===null) {
             if($link) query($db,"UPDATE github_task_links SET snapshot=?,synced_at=?,last_error='' WHERE task_id=?",[json_encode($snapshot,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$now,$link['task_id']]);
-            query($db,"UPDATE github_jobs SET state='done',claim=NULL,lease_until=NULL,finished_at=?,last_error='' WHERE id=?",[$now,$job['id']]); return 'done';
+            query($db,"UPDATE github_jobs SET state='done',claim=NULL,lease_until=NULL,finished_at=?,last_error='' WHERE id=?",[$now,$job['id']]);relOutcome($db,(int)$repo['project_id'],'github',(int)$job['id'],'recovered','verified'); return 'done';
         }
         $status=$error instanceof GitHubFailure?$error->http:0;
         $retryAt=$error instanceof GitHubFailure?$error->retryAt:0;
@@ -286,7 +287,7 @@ function ghFinish(PDO $db,array $job,?array $access,?array $snapshot,?\Throwable
         $org=(int)entity($db,'SELECT organization_id FROM projects WHERE id=?',[$repo['project_id']])['organization_id'];
         logsEnqueue($db,$org,(int)$repo['project_id'],'github.sync.failed',(int)$job['id']);
         // Access loss must hide all cached repository data. 404 on a linked item alone does not revoke the repository.
-        if($access===null && $status===404) {ghDeactivate($db,$repo,'GitHub: installation or repository no longer accessible'); return 'cancelled';}
+        if($access===null && $status===404) {ghDeactivate($db,$repo,'GitHub: installation or repository no longer accessible');relOutcome($db,(int)$repo['project_id'],'github',(int)$job['id'],'cancelled','access_lost'); return 'cancelled';}
         if($access===null) {
             query($db,'UPDATE github_repositories SET last_error=? WHERE id=?',[$reason,$repo['id']]);
             if(in_array($status,[401,403,404,422],true)&&$retryAt===0) query($db,'UPDATE github_task_links SET snapshot=NULL,synced_at=NULL,last_error=? WHERE repository_binding=?',[$reason,$repo['id']]);
@@ -300,6 +301,7 @@ function ghFinish(PDO $db,array $job,?array $access,?array $snapshot,?\Throwable
         query($db,'UPDATE github_jobs SET state=?,claim=NULL,lease_until=NULL,available_at=?,finished_at=?,last_error=? WHERE id=?',[$dead?'dead':'pending',max($now+$delay,$retryAt),$dead?$now:null,$reason,$job['id']]);
         // Respect a shared rate-limit response for other pending work on the same installation.
         if($retryAt>$now) query($db,"UPDATE github_jobs SET available_at=? WHERE state='pending' AND available_at<? AND repository_binding IN (SELECT id FROM github_repositories WHERE installation_id=?)",[$retryAt,$retryAt,$repo['installation_id']]);
+        relOutcome($db,(int)$repo['project_id'],'github',(int)$job['id'],$dead?'dead':'retry',$status?'http_'.$status:'transport');
         return $dead?'dead':'retry';
     });
 }
