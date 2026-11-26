@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства'];
+const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections','logs'=>'connections','logs.export'=>'connections','bots'=>'connections','incidents'=>'connections'];
 
 function h(mixed $value): string {
@@ -149,6 +149,10 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'reminder.subscribe':
+            $pid=$projectId();$lead=(int)choice($_POST['lead']??'',array_combine(array_map('strval',range(0,90)),range(0,90)));reminderSubscribe($db,$user,$pid,word($_POST['kind']??'',32,'Тип'),$lead,choice($_POST['assigned']??'',['0'=>'','1'=>''])==='1',choice($_POST['enable']??'',['0'=>'','1'=>''])==='1',mfaFresh());go('notifications',['project'=>$pid]);
+        case 'reminder.mark':
+            reminderMark($db,$user,numberId($_POST['subscription']??null),numberId($_POST['object']??null),word($_POST['deadline']??'',32,'Срок'),choice($_POST['read']??'',['0'=>'','1'=>''])==='1',mfaFresh(),time());go('notifications');
         case 'incident.policy':
             $pid=$projectId();incidentConfigure($db,$user,$pid,numberId($_POST['responsible_id']??null),numberId($_POST['minutes']??null),choice($_POST['active']??'',['1'=>'','0'=>''])==='1');go('incidents',['project'=>$pid]);
         case 'incident.scan':
@@ -524,20 +528,13 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             if (!$projectId) throw new Problem('Выберите проект.',404);
             $data=workloadPage($db,$user,$projectId,weekStart($_GET['week']??gmdate('Y-m-d',strtotime('monday this week'))),optionalId($_GET['sprint']??'')); break;
         case 'search':
-            $q=word($_GET['q']??'',120,'Поиск',false);
-            $data=['term'=>$q,'matches'=>[]];
-            if ($q!=='') {
-                $like='%'.strtr($q,['!'=>'!!','%'=>'!%','_'=>'!_']).'%';
-                $data['matches']['projects']=query($db,"SELECT p.id,p.title FROM projects p WHERE $scope AND (LOWER(p.title) LIKE LOWER(?) ESCAPE '!' OR LOWER(p.client) LIKE LOWER(?) ESCAPE '!') ORDER BY p.id DESC LIMIT 100",[...$scopeArgs,$like,$like])->fetchAll();
-                $taskSearch=planningSearchSql($db,['t.title','t.result_customer','t.acceptance_criteria']);
-                $data['matches']['tasks']=query($db,"SELECT t.id,t.title FROM tasks t JOIN projects p ON p.id=t.project_id WHERE $scope AND $taskSearch ORDER BY t.id DESC LIMIT 100",[...$scopeArgs,...array_fill(0,3,planningLike($q))])->fetchAll();
-                $milestoneSearch=planningSearchSql($db,['m.title']);
-                $data['matches']['milestones']=query($db,"SELECT m.id,m.title,m.project_id FROM milestones m JOIN projects p ON p.id=m.project_id WHERE $scope AND $milestoneSearch ORDER BY m.id DESC LIMIT 100",[...$scopeArgs,planningLike($q)])->fetchAll();
-                [$docScope,$docArgs]=projectRightScope($db,$user,'legal');
-                $data['matches']['documents']=query($db,"SELECT d.id,d.title FROM documents d JOIN projects p ON p.id=d.project_id WHERE $docScope AND LOWER(d.title) LIKE LOWER(?) ESCAPE '!' ORDER BY d.id DESC LIMIT 100",[...$docArgs,$like])->fetchAll();
-            }
-            break;
+            $data=discoverySearch($db,$user,word($_GET['q']??'',120,'Поиск',false),$projectId,word($_GET['kind']??'',32,'Тип',false),numberId($_GET['n']??1),mfaFresh());break;
+        case 'notifications':
+            $data=reminderInbox($db,$user,$projectId,mfaFresh(),time(),word($_GET['kind']??'',32,'Тип',false),numberId($_GET['n']??1),choice($_GET['unread']??'0',['0'=>'','1'=>''])==='1')+reminderSettings($db,$user,$projectId,mfaFresh());break;
+        case 'digest':
+            $horizon=(int)choice($_GET['horizon']??'7',array_combine(array_map('strval',range(0,90)),range(0,90)));$data=reminderDigest($db,$user,$projectId,mfaFresh(),time(),$horizon);break;
         case 'overview':
+            $data['reminderOverview']=reminderOverview($db,$user,mfaFresh(),time());
             $data['counts'] = query($db,"SELECT COUNT(DISTINCT p.id) projects,count(CASE WHEN t.state!='done' THEN 1 END) active,count(CASE WHEN t.state='done' THEN 1 END) done FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE $scope",$scopeArgs)->fetch();
             $blocked=planningBlockedSql(); $late=planningBlockedSql(true);
             $data['tasks'] = query($db,"SELECT t.*,p.title project_title,u.name assignee,CASE WHEN $blocked THEN 1 ELSE 0 END blocked,CASE WHEN $late THEN 1 ELSE 0 END late_blocker FROM tasks t JOIN projects p ON p.id=t.project_id LEFT JOIN users u ON u.id=t.assignee_id

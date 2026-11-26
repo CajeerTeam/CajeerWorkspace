@@ -39,3 +39,4 @@ require_once __DIR__ . '/Editorial.php';
 require_once __DIR__ . '/Logs.php';
 require_once __DIR__ . '/Bots.php';
 require_once __DIR__ . '/Incidents.php';
+require_once __DIR__ . '/Discovery.php';
