@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.2.2', '1.2.3'
+OLD, NEW = '1.2.3', '1.3.0'
 OLD_SCHEMA, SCHEMA = 36, 36
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
@@ -195,7 +195,7 @@ def old_snapshot(folder, backend, data, objects, env):
 
 
 def migrated_matches(before, after):
-    # No schema change in 1.2.3: the entire snapshot must match exactly.
+    # No schema change in 1.3.0: the entire snapshot must match exactly.
     return before['schema']==OLD_SCHEMA and after['schema']==SCHEMA and recovery.canonical(before)==recovery.canonical(after)
 
 
@@ -243,7 +243,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         if target==OLD:
             # Same schema: rollback still requires the exact pre-upgrade state.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 36 using 1.2.2 recovery tools') from exc
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 36 using 1.2.3 recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')

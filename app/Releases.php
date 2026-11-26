@@ -181,3 +181,35 @@ function releasePage(PDO $db,array $user,int $project,?int $id): array {
     }
     return ['project'=>$p,'repository'=>$repo,'releases'=>$rows,'release'=>$r,'releaseTasks'=>$tasks,'eligible'=>$eligible,'responsibles'=>$responsibles,'releaseManage'=>$manage,'evidence'=>$evidence,'bookLinks'=>$r?bookReleaseLinks($db,$u,$project,(int)$r['id']):[]];
 }
+
+// Read-only bounded projection for the assistant. Same project/connection rights as releasePage.
+function releaseAssistantRows(PDO $db,array $u,int $project,?array $ids,int $limit): array {
+    requireProjectRight($db,$u,$project,'connections');
+    if($ids===[])return [];
+    if($limit<1||$limit>100)throw new \LogicException('Invalid release limit');
+    $where='project_id=?';$args=[$project];
+    if($ids!==null){$where.=' AND id IN ('.implode(',',array_fill(0,count($ids),'?')).')';$args=[...$args,...$ids];}
+    $rows=query($db,"SELECT id,tag FROM project_releases WHERE $where ORDER BY id DESC LIMIT $limit",$args)->fetchAll();$out=[];
+    foreach($rows as $item){
+        $r=releaseRow($db,$project,(int)$item['id']);
+        $fields=['state'=>$r['state'],'commit_sha'=>$r['commit_sha'],'version'=>(int)$r['version'],'created_at'=>gmdate('c',(int)$r['created_at']),'ci'=>'unknown','verified_at'=>null,'confirmation_at'=>$r['confirmed_at']===null?null:gmdate('c',(int)$r['confirmed_at'])];
+        // Do not expose old GitHub evidence following loss of access/rebinding. Never transmit raw evidence/changelog.
+        try{releaseRepo($db,$r);$active=true;}catch(Problem){$active=false;}
+        if($active){
+            // Failure messages are produced by release domain checks, not user-entered changelogs.
+            if($r['last_error']!=='')$fields['last_verification_error']=aiText($r['last_error']);
+            if($r['evidence']!==null&&$r['verified_at']!==null&&in_array($r['state'],['verified','confirmed'],true)&&hash_equals((string)$r['evidence_hash'],hash('sha256',$r['evidence']))){
+                try{$e=json_decode($r['evidence'],true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){$e=[];}
+                if(($e['ref']['commit_sha']??null)===$r['commit_sha']&&is_array($e['ci']['checks']??null)&&$e['ci']['checks']&&is_array($e['ci']['commit_status']??null)){
+                    $valid=true;foreach($e['ci']['checks'] as $check)if(($check['status']??null)!=='completed'||($check['conclusion']??null)!=='success'){$valid=false;break;}
+                    if($valid&&in_array($e['ci']['commit_status']['state']??null,['none','success'],true)){
+                        $fields['verified_at']=gmdate('c',(int)$r['verified_at']);$fields['ci']='historical_success';$fields['checks_count']=count($e['ci']['checks']);
+                    }
+                }
+            }
+        }
+        $fields['repository_binding_active']=$active;
+        $out[]=['id'=>(int)$r['id'],'tag'=>$r['tag'],'fields'=>$fields];
+    }
+    return $out;
+}

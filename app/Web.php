@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
+const PAGE_TITLES = ['assistant'=>'AI-ассистент проекта','overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections','logs'=>'connections','logs.export'=>'connections','bots'=>'connections','incidents'=>'connections'];
 
 function h(mixed $value): string {
@@ -172,6 +172,18 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'ai.ask':
+            $cfg=aiConfig();$pid=$projectId();$topic=choice($_POST['topic']??'',AI_TOPICS);$term=word($_POST['term']??'',120,'Ключевые слова',false);$question=word($_POST['question']??'',1200,'Вопрос');
+            if(($_POST['consent']??'')!=='yes')throw new Problem('Подтвердите передачу выбранного контекста в OpenAI.',422);
+            $freshUser=$user;
+            $recheck=static function()use($db,&$freshUser):array{
+                if(($_SESSION['auth_kind']??null)==='oidc'&&!validateOidcSession($db))throw new Problem('Сессия ID больше не подтверждена.',403);
+                $fresh=currentUser($db);if(!$fresh||empty($fresh['organization_id'])||(($fresh['auth_kind']??null)==='emergency'&&!($_SESSION['emergency_verified']??false)))throw new Problem('Сессия больше не действует.',403);
+                return $freshUser=$fresh;
+            };
+            $answer=aiAsk($db,$user,$pid,$topic,$term,$question,$cfg,$recheck);
+            $fresh=$freshUser;$projects=aiProjects($db,$fresh,$cfg);$selected=aiProject($db,$fresh,$pid,$cfg);
+            pageView('assistant',PAGE_TITLES['assistant'],$fresh,['projects'=>$projects,'selected'=>$selected,'topic'=>$topic,'term'=>$term,'question'=>$question,'result'=>$answer]);exit;
         case 'reliability.reconcile':
             $pid=$projectId();$result=relReconcile($db,$user,$pid);$_SESSION['notice']='Сверка поставлена в очередь: '.json_encode($result,JSON_THROW_ON_ERROR);go('reliability',['project'=>$pid]);
         case 'reliability.verify':
@@ -476,6 +488,9 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     }
     $data = [];
     switch ($page) {
+        case 'assistant':
+            $cfg=aiConfig();$projects=aiProjects($db,$user,$cfg);$selected=$projectId===null?null:aiProject($db,$user,$projectId,$cfg);
+            $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'overview','term'=>'','question'=>'','result'=>null];break;
         case 'reliability':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=relPage($db,$user,$projectId,optionalId($_GET['before']??''));break;
         case 'incidents':

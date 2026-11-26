@@ -112,8 +112,12 @@ function checkTaskTransition(PDO $db,array $task,string $state): void {
     if ($state==='done' && ($task['result_customer']==='' || $task['acceptance_criteria']==='')) throw new Problem('Укажите заказчика результата и критерии приёмки перед завершением.',409);
     if ($task['state']==='done' && $state!=='done' && query($db,"SELECT 1 FROM task_dependencies d JOIN tasks t ON t.id=d.task_id WHERE d.project_id=? AND d.prerequisite_id=? AND t.state<>'todo' LIMIT 1",[$project,$id])->fetchColumn()) throw new Problem('Сначала верните зависимые задачи в очередь.',409);
 }
-function planningMilestones(PDO $db,int $project): array {
-    return query($db,"SELECT m.*,COUNT(tm.task_id) total,COUNT(CASE WHEN t.state='done' THEN 1 END) done FROM milestones m LEFT JOIN task_milestones tm ON tm.milestone_id=m.id LEFT JOIN tasks t ON t.id=tm.task_id WHERE m.project_id=? GROUP BY m.id ORDER BY m.state='closed',m.due_on IS NULL,m.due_on,m.id",[$project])->fetchAll();
+function planningMilestones(PDO $db,int $project,?array $ids=null,?int $limit=null): array {
+    if($ids===[])return [];
+    if($limit!==null&&($limit<1||$limit>100))throw new \LogicException('Invalid milestone limit');
+    $where='m.project_id=?';$args=[$project];
+    if($ids!==null){$where.=' AND m.id IN ('.implode(',',array_fill(0,count($ids),'?')).')';$args=[...$args,...$ids];}
+    return query($db,"SELECT m.*,COUNT(tm.task_id) total,COUNT(CASE WHEN t.state='done' THEN 1 END) done FROM milestones m LEFT JOIN task_milestones tm ON tm.milestone_id=m.id LEFT JOIN tasks t ON t.id=tm.task_id WHERE $where GROUP BY m.id ORDER BY m.state='closed',m.due_on IS NULL,m.due_on,m.id".($limit===null?'':' LIMIT '.$limit),$args)->fetchAll();
 }
 function planningPeople(PDO $db,array $user,int $project): array {
     $u=organizationUser($db,$user); allowedProject($db,$u,$project);
