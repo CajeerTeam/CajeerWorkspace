@@ -8,7 +8,7 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const SCHEMA_VERSION = 33;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
@@ -20,6 +20,9 @@ const DIRECTIONS = ['income'=>'Поступление', 'expense'=>'Расход
 final class Problem extends RuntimeException {
     public function __construct(string $message, public readonly int $status = 422) { parent::__construct($message); }
 }
+
+/** Nonempty ASCII decimal digits, independent of locale and ext-ctype. */
+function asciiDigits(string $value): bool { return preg_match('/\A[0-9]+\z/',$value) === 1; }
 
 function can(array $user, string $permission): bool {
     $allowed = match ($permission) {

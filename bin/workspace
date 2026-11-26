@@ -29,8 +29,9 @@ function passwordInput(): string {
 }
 
 function helpText(): string {
+    $version = VERSION;
     return <<<HELP
-CajeerWorkspace PHP 1.0.0
+CajeerWorkspace PHP $version
 
   php bin/workspace init EMAIL "Имя владельца"
   php bin/workspace user:add EMAIL "Имя" ROLE

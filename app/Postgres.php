@@ -8,7 +8,7 @@ function postgresConnect(): PDO {
     if (!extension_loaded('pdo_pgsql')) throw new Problem('Не установлено расширение pdo_pgsql.',503);
     $values=['host'=>getenv('PGHOST')?:'localhost','port'=>getenv('PGPORT')?:'5432','dbname'=>getenv('PGDATABASE')?:'', 'sslmode'=>getenv('PGSSLMODE')?:'verify-full'];
     foreach ($values as $v) if ($v==='' || preg_match('/[;\s\x00-\x1f\'"\\\\]/',$v)) throw new Problem('Проверьте PGHOST, PGPORT, PGDATABASE, PGSSLMODE.',503);
-    if (!ctype_digit($values['port']) || (int)$values['port']<1 || (int)$values['port']>65535) throw new Problem('Некорректный PGPORT.',503);
+    if (!asciiDigits($values['port']) || (int)$values['port']<1 || (int)$values['port']>65535) throw new Problem('Некорректный PGPORT.',503);
     if (!in_array($values['sslmode'],['disable','require','verify-ca','verify-full'],true)) throw new Problem('Некорректный PGSSLMODE.',503);
     $dsn='pgsql:'.implode(';',array_map(fn($k,$v)=>$k.'='.$v,array_keys($values),$values));
     $db=new PDO($dsn,getenv('PGUSER')?:null,getenv('PGPASSWORD')?:null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);

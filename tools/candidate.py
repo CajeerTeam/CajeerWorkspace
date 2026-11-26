@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '0.9.2', '1.0.0'
+OLD, NEW = '1.0.0', '1.0.1'
 SCHEMA = 33
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
@@ -209,7 +209,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         verify_trees(root)
         active = pointer(root)
         m, _, _ = recovery.verify(backup,backup_sha)
-        require(m['version']==OLD and m['snapshot']['schema']==SCHEMA,'Requires verified pre-upgrade 0.9.2 backup')
+        require(m['version']==OLD and m['snapshot']['schema']==SCHEMA,f'Requires verified pre-upgrade {OLD} backup')
         backend=m['backend']
         require((os.environ.get('WORKSPACE_DB') or 'sqlite')==backend,'Database backend mismatch')
         env=dict(os.environ,WORKSPACE_DATA=str(data),WORKSPACE_OBJECT_DIR=str(objects),WORKSPACE_DB=backend)

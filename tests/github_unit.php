@@ -4,6 +4,8 @@ namespace Workspace;
 require dirname(__DIR__).'/app/bootstrap.php';
 require __DIR__.'/github_fixture.php';
 $gh_checks=0;
+foreach (['0','001','65535','999999999999999999999999999'] as $digits) gcheck(asciiDigits($digits),'ASCII decimal accepted');
+foreach (['','-1','+1','1.0','1e3',' 1',"1\n","1\0",'１２','١٢'] as $digits) gcheck(!asciiDigits($digits),'Non-ASCII/non-decimal rejected');
 [$pem,$public]=gpair();$now=time();$jwt=ghJwt('20',$pem,$now);
 [$header,$payload,$sig]=explode('.',$jwt);
 $decode=fn($v)=>base64_decode(strtr($v,'-_','+/'),true);

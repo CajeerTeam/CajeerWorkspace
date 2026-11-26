@@ -83,7 +83,16 @@ try {
     $paths=['engine'=>['/health/ready','ready'],'logs'=>['/ready','ok'],'forum'=>['/health/ready','ready'],'book'=>['/health/ready','ok'],'lite'=>['/health/ready','ready'],'bots'=>['/api/health','ok'],'servers'=>['/api/v1/ready','ready']];
     foreach ($paths as $kind=>[$path,$status]) {
         $c=array_merge($items[$kind],['configured'=>true,'base'=>'https://demo.invalid']);
-        probe($c,static function ($verb,$url) use ($path,$status) {check($verb==='GET' && $url==='https://demo.invalid'.$path,'Маршрут '.$url); return ['status'=>$status];});
+        $routes=[];
+        $r=observeConnection($c,static function ($verb,$url) use ($kind,$path,$status,&$routes) {
+            check($verb==='GET','Read-only GET '.$url); $routes[]=$url;
+            if ($url==='https://demo.invalid'.$path) return ['status'=>$status];
+            if ($kind==='forum' && $url==='https://demo.invalid/api/v1/health') return ['version'=>'2.1.0','edition_version'=>'1.6.0','engine_api_version'=>'1.1'];
+            throw new RuntimeException('Unexpected route '.$url);
+        });
+        check($r['ok']===1,'Готовность '.$kind);
+        check($routes===($kind==='forum'?['https://demo.invalid/health/ready','https://demo.invalid/api/v1/health']:['https://demo.invalid'.$path]),'Маршруты '.$kind);
+        if ($kind==='forum') check($r['observed_version']==='1.6.0' && $r['version_source']==='version_api' && $r['version_error']===null,'Редакция Forum, не версия ядра');
         rejected(fn()=>probe($c,fn()=>['status'=>'unknown']),422,'Неожиданный ответ '.$kind);
     }
     putenv('WORKSPACE_GITHUB_TOKEN=local-test-token');

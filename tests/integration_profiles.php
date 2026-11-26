@@ -41,6 +41,40 @@ try {
     expectProfile($r['ok']===1 && $r['observed_version']===null && $r['version_error']==='HTTP 503','version failure distinct from readiness');
     $r=observeConnection($items['engine'],fn()=>throw new Problem('HTTP 503'));
     expectProfile($r['ok']===0 && $r['summary']==='HTTP 503','readiness failure');
+    // Exercise the actual shipped Forum configuration, not a simplified profile.
+    $forum=connections(ROOT.'/config/connections.example.json')['forum'];
+    $forum=array_replace($forum,['base'=>'https://example.invalid/forum','configured'=>true]);
+    $readyUrl=$forum['base'].'/health/ready'; $versionUrl=$forum['base'].'/api/v1/health';
+    foreach (['success','missing','invalid','failed','not_ready','readiness_failed'] as $scenario) {
+        $calls=[];
+        $wire=static function($method,$url) use($scenario,$readyUrl,$versionUrl,&$calls) {
+            expectProfile($method==='GET','Forum uses GET'); $calls[]=$url;
+            if ($url===$readyUrl) {
+                if ($scenario==='readiness_failed') throw new Problem('HTTP 503');
+                return ['status'=>$scenario==='not_ready'?'unavailable':'ready','version'=>'2.1.0'];
+            }
+            if ($url!==$versionUrl) throw new \RuntimeException('Unexpected Forum route');
+            if ($scenario==='failed') throw new Problem('HTTP 503');
+            $data=['version'=>'2.1.0','engine_api_version'=>'1.1'];
+            if ($scenario!=='missing') $data['edition_version']=$scenario==='invalid'?[]:'1.6.0';
+            return $data;
+        };
+        $r=observeConnection($forum,$wire);
+        $unavailable=in_array($scenario,['not_ready','readiness_failed'],true);
+        expectProfile($calls===($unavailable?[$readyUrl]:[$readyUrl,$versionUrl]),'Forum ordered routes '.$scenario);
+        expectProfile($r['ok']===($unavailable?0:1),'Forum readiness independent '.$scenario);
+        if ($scenario==='success') {
+            expectProfile($r['observed_version']==='1.6.0' && $r['version_source']==='version_api' && $r['version_error']===null,'Forum edition distinct from core');
+        } elseif ($unavailable) {
+            expectProfile($r['observed_version']===null && $r['version_endpoint']===null && $r['version_error']===null,'No version call after failed readiness');
+        } else {
+            expectProfile($r['observed_version']===null && $r['version_source']===null && $r['version_endpoint']===$versionUrl && str_contains($r['summary'],'версия не подтверждена'),'Forum unknown version visible');
+            $expected=match($scenario) {'missing'=>'API версии не сообщает поле edition_version.','invalid'=>'Провайдер вернул некорректную версию.','failed'=>'HTTP 503'};
+            expectProfile($r['version_error']===$expected,'Forum separate version diagnostic '.$scenario);
+        }
+        $calls=[]; $pilot=pilotProbes(['forum'=>$forum],$wire)['forum'];
+        expectProfile($pilot['ready']===!$unavailable && $pilot['status']===($unavailable?'unavailable':($scenario==='success'?'ready':'version_check_failed')),'Forum pilot gate '.$scenario);
+    }
     putenv('WORKSPACE_AAPANEL_KEY=fixture-secret');
     $r=observeConnection($items['aapanel'],static function ($method,$url,$headers,$form) {
         expectProfile($method==='POST' && $form['request_token']===md5($form['request_time'].md5('fixture-secret')),'signed panel request');

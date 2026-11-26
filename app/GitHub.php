@@ -50,8 +50,8 @@ function ghHttp(string $method,string $path,string $credential,?array $body=null
     if ($ok===false) throw new GitHubFailure(0);
     if ($status<200||$status>=300) {
         $retry=$status===429?time()+60:0;
-        if (isset($headers['retry-after']) && ctype_digit($headers['retry-after'])) $retry=max($retry,time()+min(86400,(int)$headers['retry-after']));
-        if (($headers['x-ratelimit-remaining']??null)==='0'&&ctype_digit($headers['x-ratelimit-reset']??'')) $retry=max($retry,min(time()+86400,(int)$headers['x-ratelimit-reset']));
+        if (isset($headers['retry-after']) && asciiDigits($headers['retry-after'])) $retry=max($retry,time()+min(86400,(int)$headers['retry-after']));
+        if (($headers['x-ratelimit-remaining']??null)==='0'&&asciiDigits($headers['x-ratelimit-reset']??'')) $retry=max($retry,min(time()+86400,(int)$headers['x-ratelimit-reset']));
         throw new GitHubFailure($status,$retry);
     }
     if ($status===204) return [];

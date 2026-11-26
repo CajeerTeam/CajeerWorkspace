@@ -10,6 +10,10 @@
 {"forum":{"base_url":"https://forum.example.com","installed_version":"1.6.0","version_path":"/api/v1/health","version_field":"edition_version"}}
 ```
 
+### Готовность и версия редакции (Workspace 1.0.1)
+
+`sync forum` сначала выполняет `GET /health/ready` (ожидается `status: ready`), затем `GET /api/v1/health` и читает **edition_version**, а не `version` ядра. При отказе readiness второй запрос не выполняется. Если readiness успешен, но поле отсутствует, некорректно или второй маршрут возвращает ошибку, сервис остаётся «Доступно» (`ok=1`, `sync` код 0 для этого экземпляра); в результате явно указано «версия не подтверждена», `observed_version=null`, отдельная причина в `version_error`. Последняя известная версия остаётся исторической, а версия оператора не подставляется вместо наблюдаемой. `profile --check` фиксирует замечание и возвращает 1; `pilot:probe` помечает экземпляр `version_check_failed`, что не допускает production-приёмку. Это не отменяет проверок версии ядра, редакции и Engine API при прикладных операциях Forum.
+
 В защищённом каталоге вне docroot создайте JSON, например `/srv/workspace-config/forum-identities.json`, права чтения только у администратора и пользователя PHP-FPM. Укажите `WORKSPACE_FORUM_IDENTITIES` с этим абсолютным путём. Ключи — подключение, затем `organization_id:user_id` Workspace. `user_id` внутри — UUID **реального соответствующего пользователя Forum**, не UUID владельца установки. Пример:
 
 ```json

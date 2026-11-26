@@ -205,7 +205,9 @@ function observeConnection(array $c, ?callable $transport = null): array {
                 if (($c['version_path'] ?? null) !== null) {
                     $r['version_endpoint']=$c['base'].$c['version_path'];
                     $versionData=$read('GET',$r['version_endpoint'],[],null,2000,5500,true);
-                    $r['observed_version']=$safe(versionValue($versionData,$c['version_field']),true);
+                    $versionValue=versionValue($versionData,$c['version_field']);
+                    if ($versionValue===null) throw new Problem('API версии не сообщает поле '.$c['version_field'].'.');
+                    $r['observed_version']=$safe($versionValue,true);
                     $r['version_source']='version_api';
                 } elseif (($versionValue=versionValue($data,$c['version_field'] ?? 'version')) !== null) {
                     $r['observed_version']=$safe($versionValue,true);
@@ -214,6 +216,7 @@ function observeConnection(array $c, ?callable $transport = null): array {
                     $r['version_error']='API готовности не сообщает версию.';
                 }
             } catch (Problem $e) { $r['version_error']=$e->getMessage(); }
+            if ($r['version_error']!==null) $r['summary'].=' · версия не подтверждена';
         }
         $r['ok']=1;
     } catch (Problem $e) { $r['summary']=$e->getMessage(); }

@@ -181,6 +181,9 @@ class Provider(BaseHTTPRequestHandler):
     fail_book = False
     panel_key = b"fixture-panel-key"
     fail_version = False
+    forum_version = "success"
+    fail_forum = False
+    forum_version_calls = 0
 
     def log_message(self, *args):
         pass
@@ -195,6 +198,16 @@ class Provider(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.fail_book and self.path == "/book/health/ready":
             return self.reply(503,b'{"status":"unavailable"}')
+        if self.path == "/forum/health/ready":
+            return self.reply(503 if self.fail_forum else 200, json.dumps({"status":"unavailable" if self.fail_forum else "ready","version":"2.1.0"}).encode())
+        if self.path == "/forum/api/v1/health":
+            Provider.forum_version_calls += 1
+            if self.forum_version == "failed":
+                return self.reply(503,b'{}')
+            data = {"version":"2.1.0","engine_api_version":"1.1"}
+            if self.forum_version == "success":
+                data["edition_version"] = "1.6.0"
+            return self.reply(200,json.dumps(data).encode())
         status = self.expected.get(self.path.lstrip("/"))
         if status:
             return self.reply(200,json.dumps({"status":status,"version":"1.2.3"}).encode())
@@ -246,6 +259,7 @@ def integrations(tmp, env):
                 item.setdefault("owner","Ops")
                 item.setdefault("launch_url",url+"/"+name)
         config["book"].update(version_path="/version",version_field="build.release")
+        config["forum"].update(version_path="/api/v1/health",version_field="edition_version")
         config_path = tmp/"connections.json"
         config_path.write_text(json.dumps(config))
         env = env | {"WORKSPACE_CONFIG":str(config_path),"WORKSPACE_AAPANEL_KEY":"fixture-panel-key"}
@@ -256,6 +270,22 @@ def integrations(tmp, env):
         expect(profile["stand"]["name"]=="Test stand" and profile["connections"]["engine"]["latest"]["observed_version"]=="1.2.3","stand profile and actual version")
         expect(profile["connections"]["book"]["latest"]["observed_version"]=="2.3.4","version API")
         expect(cli(env,"profile","--check",success=False).returncode==1,"strict profile detects absent GitHub")
+        forum=profile["connections"]["forum"]
+        expect(forum["latest"]["observed_version"]=="1.6.0" and forum["latest"]["http_status"]==200 and forum["latest"]["version_http_status"]==200,"Forum edition via separate TLS route")
+        for mode, code in (("missing",200),("failed",503)):
+            Provider.forum_version=mode
+            result=cli(env,"sync","forum",extra=extra)
+            expect("версия не подтверждена" in result.stdout,"Forum CLI warns without failing readiness")
+            profile=json.loads(cli(env,"profile").stdout); forum=profile["connections"]["forum"]
+            latest=forum["latest"]
+            expect(forum["status"]=="Доступно" and latest["ok"]==1 and latest["http_status"]==200 and latest["version_http_status"]==code and latest["observed_version"] is None and latest["version_error"] and latest["transition"]=="unchanged","Forum version failure distinct from readiness")
+            expect(forum["last_version"]["observed_version"]=="1.6.0" and "forum: дополнительный API версии не подтверждён" in profile["issues"],"Forum retained version and strict issue")
+        Provider.fail_forum=True; calls=Provider.forum_version_calls
+        expect(cli(env,"sync","forum",success=False,extra=extra).returncode==1 and Provider.forum_version_calls==calls,"Failed Forum readiness skips version route")
+        Provider.fail_forum=False; Provider.forum_version="success"
+        cli(env,"sync","forum",extra=extra)
+        protocol=json.loads(cli(env,"protocol","forum").stdout)["checks"]
+        expect([row["transition"] for row in protocol]==["recovered","down","unchanged","unchanged","initial"],"Forum readiness transitions independent of version")
         Provider.fail_book = True
         result = cli(env,"sync",success=False,extra=extra)
         expect(result.returncode==1 and "book\tERROR\tHTTP 503" in result.stdout and "servers\tOK" in result.stdout,"isolated outage")
