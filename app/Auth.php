@@ -60,6 +60,7 @@ function verifyMfa(PDO $db,array $user,string $code,bool $enroll): void {
     $pending=$_SESSION['mfa_pending']??null;
     atomic($db,function() use($db,$user,$uid,$code,$enroll,$pending) {
         entity($db,'SELECT id FROM users WHERE id=? AND enabled=1 AND session_version=?',[$uid,$user['session_version']]);
+        if (staffHandle()!==null && !staffSessionValid($db,$user)) throw new Problem('Сессия отозвана.',403);
         $row=query($db,'SELECT * FROM mfa_credentials WHERE user_id=?',[$uid])->fetch();
         if ($enroll) {
             if ($row || !is_array($pending)||($pending['uid']??null)!==$uid||$pending['at']<time()-300||($_SESSION['born']??0)<time()-300) throw new Problem('Для подключения фактора войдите заново.',403);
@@ -68,6 +69,10 @@ function verifyMfa(PDO $db,array $user,string $code,bool $enroll): void {
             query($db,'INSERT INTO mfa_credentials(user_id,secret_box,last_step) VALUES(?,?,?)',[$uid,$pending['box'],$step]);
             // Invalidate other sessions when the credential is first installed.
             query($db,'UPDATE users SET session_version=session_version+1 WHERE id=?',[$uid]);
+            if (staffHandle()!==null) {
+                query($db,'UPDATE staff_sessions SET session_version=session_version+1 WHERE handle=? AND user_id=? AND revoked_at IS NULL',[staffHandle(),$uid]);
+                foreach (['staff_sessions','oidc_sessions'] as $table) query($db,"UPDATE $table SET revoked_at=? WHERE user_id=? AND handle<>? AND revoked_at IS NULL",[time(),$uid,staffHandle()]);
+            }
         } else {
             if (!$row) throw new Problem('Сначала подключите второй фактор.',403);
             $step=matchingStep(openMfa($row['secret_box'],$uid),$code,(int)$row['last_step'],time());
@@ -85,7 +90,9 @@ function mfaPage(PDO $db,array $user): void {
         if (!isset($_SESSION['mfa_pending'])||$_SESSION['mfa_pending']['uid']!==$uid||$_SESSION['mfa_pending']['at']<time()-300) $_SESSION['mfa_pending']=['uid'=>$uid,'at'=>time(),'box'=>sealMfa(random_bytes(20),$uid)];
         $secret=base32Secret(openMfa($_SESSION['mfa_pending']['box'],$uid));
     }
-    pageView('security','Безопасность',$user,['enrolled'=>$enrolled,'secret'=>$secret]);
+    $canUnlink=true; try { assertUnlinkAllowed($db,$uid); } catch (Problem $e) { if ($e->status!==409) throw $e; $canUnlink=false; }
+    $orgPolicy=empty($user['organization_id'])?'inherit':organizationAuthPolicy($db,(int)$user['organization_id']);
+    pageView('security','Безопасность',$user,['enrolled'=>$enrolled,'secret'=>$secret,'canUnlink'=>$canUnlink,'orgPolicy'=>$orgPolicy,'linked'=>(bool)query($db,'SELECT 1 FROM oidc_identities WHERE user_id=? AND issuer=?',[$uid,ID_ISSUER])->fetchColumn(),'sessions'=>activeStaffSessions($db,$user),'history'=>identityHistory($db,$uid)]);
 }
 function issueGuest(PDO $db,array $user,int $project,int $document,int $revision,string $email,int $hours,?int $orderId=null): string {
     if (!oidcEnabled()) throw new Problem('Настройте SkiF4er ID для гостевого кабинета.',503);
@@ -129,6 +136,7 @@ function oidcPrincipal(PDO $db,array $claims,?string $guestHash,?string $staffHa
             $name=is_string($claims['name']??null)&&trim($claims['name'])!==''?$claims['name']:$email;
             $uid=insertId($db,'INSERT INTO users(email,name,role,password_hash) VALUES(?,?,?,?)',[$email,word($name,90,'Имя'),'viewer',passwordHash(bin2hex(random_bytes(32)))]);
             query($db,'INSERT INTO oidc_identities(user_id,issuer,subject) VALUES(?,?,?)',[$uid,ID_ISSUER,$sub]);
+            identityEvent($db,$uid,'invitation','bind');
             $staff=entity($db,'SELECT * FROM users WHERE id=?',[$uid]);
         }
         if (query($db,'SELECT 1 FROM organization_members WHERE organization_id=? AND user_id=?',[$inv['organization_id'],$staff['id']])->fetchColumn()) throw new Problem('Участник уже зарегистрирован.',409);
@@ -165,23 +173,31 @@ function oidcCallback(PDO $db,?array $current=null): never {
     if (!oidcEnabled()) throw new Problem('Вход ID отключён политикой установки.',403);
     $tx=$_SESSION['oidc_tx']??null; unset($_SESSION['oidc_tx']);
     if (!is_array($tx)||$tx['at']<time()-300||!is_string($_GET['state']??null)||!hash_equals($tx['state'],$_GET['state'])||isset($_GET['error'])||(isset($_GET['iss'])&&$_GET['iss']!==ID_ISSUER)||!is_string($_GET['code']??null)||strlen($_GET['code'])>4096||$_GET['code']==='') throw new Problem('Вход ID не подтверждён. Начните заново.',401);
-    $switch=$tx['switch']??null;
+    $switch=$tx['switch']??null; $link=$tx['link']??null;
     if ($switch!==null && (!$current || ($current['auth_kind']??null)!=='local' || (int)$current['id']!==$switch['uid'] || (int)$current['session_version']!==$switch['version'])) throw new Problem('Исходная сессия больше не действительна.',403);
-    if ($switch===null && $current) throw new Problem('Недопустимый callback.',403);
+    if ($link!==null && (!$current || $switch!==null)) throw new Problem('Исходная сессия больше не действительна.',403);
+    if ($switch===null && $link===null && $current) throw new Problem('Недопустимый callback.',403);
     $cfg=oidcConfig(); $response=oidcHttp(oidcDiscovery()['token_endpoint'],['grant_type'=>'authorization_code','code'=>$_GET['code'],'redirect_uri'=>$cfg['callback'],'code_verifier'=>$tx['verifier']]);
     $tokens=oidcTokenSet($response); $claims=oidcClaims($tokens['id'],$tx['nonce']);
     $record=['subject'=>$claims['sub'],'sid'=>$claims['sid']??null]; oidcOnline($tokens,$record);
     $handle=bin2hex(random_bytes(32));
-    $principal=atomic($db,function() use($db,$tx,$claims,$record,$handle,$switch) {
+    $principal=atomic($db,function() use($db,$tx,$claims,$record,$handle,$switch,$link,$current) {
         if (query($db,'SELECT 1 FROM oidc_logout_events WHERE issuer=? AND issued_at>=? AND ((sid IS NOT NULL AND sid=? AND (subject IS NULL OR subject=?)) OR (sid IS NULL AND subject=?))',[ID_ISSUER,$claims['iat'],$record['sid'],$record['subject'],$record['subject']])->fetchColumn()) throw new Problem('Сессия ID уже завершена.',401);
+        if ($link!==null) { completeSelfLink($db,$current,$link,$claims,$tx['at']); return null; }
         $p=oidcPrincipal($db,$claims,$tx['guest'],$tx['staff']??null);
-        if ($switch!==null) $p=oidcSwitchPrincipal($db,$p,$switch);
+        if ($switch!==null) {
+            if (!$current || !staffSessionValid($db,$current)) throw new Problem('Исходная сессия отозвана.',403);
+            $p=oidcSwitchPrincipal($db,$p,$switch);
+        }
         query($db,'DELETE FROM oidc_sessions WHERE expires_at<=?',[time()]);
         query($db,'INSERT INTO oidc_sessions(handle,issuer,subject,sid,user_id,guest_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)',[hash('sha256',$handle),ID_ISSUER,$record['subject'],$record['sid'],$p['user']['id']??null,$p['guest'],$claims['iat'],time()+43200]);
+        if ($p['user']) staffSessionCreate($db,$p['user'],'oidc',$handle);
+        if ($switch!==null && staffHandle()!==null) staffSessionEnd($db,staffHandle(),$switch['uid']);
         return $p;
     });
+    if ($principal===null) { killLogin(); $_SESSION['notice']='SkiF4er ID привязан. Войдите заново.'; go('login'); }
     killLogin(); $_SESSION+=['auth_kind'=>'oidc','oidc_handle'=>$handle,'oidc_tokens'=>$tokens,'born'=>time(),'seen'=>time()];
-    if ($principal['user']) { $_SESSION['uid']=(int)$principal['user']['id']; $_SESSION['v']=(int)$principal['user']['session_version']; if (isset($principal['organization'])) $_SESSION['org']=$principal['organization']; go('overview'); }
+    if ($principal['user']) { $_SESSION['staff_handle']=$handle; $_SESSION['uid']=(int)$principal['user']['id']; $_SESSION['v']=(int)$principal['user']['session_version']; if (isset($principal['organization'])) $_SESSION['org']=$principal['organization']; go('overview'); }
     $_SESSION['guest_id']=$principal['guest']; go('guest');
 }
 function validateOidcSession(PDO $db): bool {
@@ -193,7 +209,7 @@ function validateOidcSession(PDO $db): bool {
 }
 function authLogout(PDO $db): never {
     $kind=$_SESSION['auth_kind']??null; $id=$_SESSION['oidc_tokens']['id']??null;
-    try { if (is_string($_SESSION['oidc_handle']??null)) query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE handle=? AND revoked_at IS NULL',[time(),hash('sha256',$_SESSION['oidc_handle'])]); } finally { killLogin(); }
+    try { if (staffHandle()!==null && !empty($_SESSION['uid'])) staffSessionEnd($db,staffHandle(),(int)$_SESSION['uid']); if (is_string($_SESSION['oidc_handle']??null)) query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE handle=? AND revoked_at IS NULL',[time(),hash('sha256',$_SESSION['oidc_handle'])]); } finally { killLogin(); }
     if ($kind==='oidc'&&is_string($id)&&oidcEnabled()) {
         try { $d=oidcDiscovery(); $cfg=oidcConfig(); header('Location: '.$d['end_session_endpoint'].'?'.http_build_query(['id_token_hint'=>$id,'client_id'=>$cfg['id'],'post_logout_redirect_uri'=>$cfg['logout']],'','&',PHP_QUERY_RFC3986),true,303); exit; } catch (\Throwable) {}
     }
@@ -215,6 +231,7 @@ function applyBackchannelLogout(PDO $db,array $claims): void {
         if (isset($claims['sid'])) { $where.=' AND sid=?'; $args[]=$claims['sid']; } else { $where.=' AND created_at<=?'; $args[]=$claims['iat']; }
         if (isset($claims['sub'])) { $where.=' AND subject=?'; $args[]=$claims['sub']; }
         query($db,"UPDATE oidc_sessions SET revoked_at=? WHERE $where",[time(),...$args]);
+        query($db,"UPDATE staff_sessions SET revoked_at=? WHERE kind='oidc' AND revoked_at IS NULL AND handle IN (SELECT handle FROM oidc_sessions WHERE revoked_at IS NOT NULL)",[time()]);
     });
 }
 function guestPage(PDO $db,string $page): void {

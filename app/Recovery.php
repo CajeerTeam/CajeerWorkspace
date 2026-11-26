@@ -27,6 +27,7 @@ function recoveryMfaRotate(PDO $db,string $newKey): array {
             query($db,'UPDATE mfa_credentials SET secret_box=? WHERE user_id=?',[$box,$uid]);++$count;
         }
         $staff=query($db,'UPDATE users SET session_version=session_version+1')->rowCount();
+        query($db,'UPDATE staff_sessions SET revoked_at=? WHERE revoked_at IS NULL',[time()]);
         $oidc=query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE revoked_at IS NULL',[time()])->rowCount();
         return ['credentials'=>$count,'staff_sessions_invalidated'=>$staff,'oidc_sessions_revoked'=>$oidc];
     });

@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.0.1 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.1.0 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -45,10 +45,10 @@ class CandidateTests(unittest.TestCase):
 
     def test_frozen_sql_even_with_recomputed_manifest(self):
         raw=candidate.archive_payload(self.new,candidate.NEW); raw.pop('SHA256SUMS')
-        for name in ('database/001.sql','database/postgresql/034.sql'):
+        for name in ('database/001.sql','database/postgresql/035.sql'):
             changed=dict(raw); changed[name]+=b'\n-- unauthorized change\n'
             with self.assertRaises(ValueError): release.validate_payload(changed)
-        self.assertEqual(len(candidate.FREEZE['migrations']),68)
+        self.assertEqual(len(candidate.FREEZE['migrations']),70)
         tampered=dict(raw); tampered['database/001.sql']+=b'\n-- change\n'
         freeze=json.loads(tampered['database/schema-freeze.json']); freeze['migrations']['database/001.sql']=release.sha(tampered['database/001.sql'])
         tampered['database/schema-freeze.json']=json.dumps(freeze).encode()
@@ -58,13 +58,13 @@ class CandidateTests(unittest.TestCase):
         path=self.root/'clean.sqlite'
         with closing(sqlite3.connect(path)) as db, db:
             db.execute('PRAGMA foreign_keys=ON')
-            for i in range(1,35):
+            for i in range(1,36):
                 p=ROOT/'database'/f'{i:03}.sql'; db.executescript(p.read_text())
                 if i==3:
                     for j in (1,2): db.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(j,recovery.digest(ROOT/'database'/f'{j:03}.sql'),'applied'))
                 if i>=3: db.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(i,recovery.digest(p),'applied'))
-            db.execute('PRAGMA user_version=34'); self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok'); self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
-            self.assertEqual(db.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],34)
+            db.execute('PRAGMA user_version=35'); self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok'); self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],35)
 
     def test_native_clean_install(self):
         if not self.native: self.skipTest('Native PDO/cURL runtime unavailable')
@@ -92,9 +92,9 @@ class CandidateTests(unittest.TestCase):
             if version!=candidate.NEW or not upgrade: return
             with closing(sqlite3.connect(db)) as c, c:
                 if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
-                    p=ROOT/'database/034.sql';c.executescript(p.read_text())
-                    c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(34,recovery.digest(p),'applied'))
-                    c.execute('PRAGMA user_version=34')
+                    p=ROOT/'database/035.sql';c.executescript(p.read_text())
+                    c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(35,recovery.digest(p),'applied'))
+                    c.execute('PRAGMA user_version=35')
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=migrate):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)

@@ -41,7 +41,9 @@ CajeerWorkspace PHP $version
   php bin/workspace auth:check
   php bin/workspace auth:policy
   php bin/workspace auth:bind EMAIL SUBJECT
-  php bin/workspace auth:unbind EMAIL
+  php bin/workspace auth:unbind EMAIL  (подтверждение локального пароля через stdin)
+  php bin/workspace auth:history EMAIL
+  php bin/workspace auth:recover EMAIL VERIFIED_SUBJECT TICKET
   php bin/workspace auth:emergency EMAIL on|off
   php bin/workspace auth:mfa-reset EMAIL
   php bin/workspace retention:preview ORG_ID OWNER_ID [LIMIT]
@@ -168,6 +170,14 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'auth:history':
+            if ($argc!==3) throw new Problem('Формат: auth:history EMAIL');
+            $u=entity($db,'SELECT id FROM users WHERE LOWER(email)=?',[normalizedEmail($argv[2])]);
+            echo json_encode(identityHistory($db,(int)$u['id']),JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; break;
+        case 'auth:recover':
+            if ($argc!==5) throw new Problem('Формат: auth:recover EMAIL VERIFIED_SUBJECT TICKET');
+            operatorRecoverIdentity($db,normalizedEmail($argv[2]),word($argv[3],255,'Проверенный subject'),word($argv[4],200,'Номер заявки'));
+            echo "Привязка восстановлена; прежние сессии отозваны.\n"; break;
         case 'auth:policy':
             if ($argc!==2) throw new Problem('Формат: auth:policy');
             $report=authPolicyReport($db); echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; exit($report['ok']?0:1);
@@ -267,14 +277,18 @@ try {
             $needed=in_array($command,['auth:bind','auth:emergency'],true)?4:3;
             if ($argc!==$needed) throw new Problem('Проверьте формат команды auth (help).');
             $email=normalizedEmail($argv[2]);
-            atomic($db,function() use($db,$email,$command,$argv) {
-                $u=entity($db,'SELECT id,enabled FROM users WHERE LOWER(email)=?',[$email]); $uid=(int)$u['id'];
+            $password=$command==='auth:unbind'?passwordInput():null;
+            atomic($db,function() use($db,$email,$command,$argv,$password) {
+                $u=entity($db,'SELECT id,enabled,password_hash FROM users WHERE LOWER(email)=?',[$email]); $uid=(int)$u['id'];
                 if ($command==='auth:bind') {
-                    $sub=word($argv[3],255,'OIDC subject');
+                    if (!$u['enabled']) throw new Problem('Учётная запись отключена.',409);
+                    $sub=word($argv[3],255,'OIDC subject'); identitySubjectAvailable($db,$uid,$sub);
                     if (query($db,'SELECT 1 FROM oidc_identities WHERE user_id=? OR (issuer=? AND subject=?)',[$uid,ID_ISSUER,$sub])->fetchColumn() || query($db,'SELECT 1 FROM guest_invites WHERE issuer=? AND subject=? AND revoked_at IS NULL AND access_until>?',[ID_ISSUER,$sub,time()])->fetchColumn()) throw new Problem('Привязка уже существует или subject принадлежит гостю. Сначала отзовите прежний доступ.',409);
                     query($db,'INSERT INTO oidc_identities(user_id,issuer,subject) VALUES(?,?,?)',[$uid,ID_ISSUER,$sub]);
                 } elseif ($command==='auth:unbind') {
-                    query($db,'DELETE FROM oidc_identities WHERE user_id=?',[$uid]);
+                    assertUnlinkAllowed($db,$uid);
+                    if (!$u['enabled'] || strlen($password)>72 || str_contains($password,"\0") || !password_verify($password,$u['password_hash'])) throw new Problem('Локальный пароль не подтверждён.',403);
+                    if (!query($db,'DELETE FROM oidc_identities WHERE user_id=?',[$uid])->rowCount()) throw new Problem('Нет привязанного ID.',409);
                 } elseif ($command==='auth:emergency') {
                     if (!in_array($argv[3],['on','off'],true)) throw new Problem('Укажите on или off.');
                     if ($argv[3]==='on') {
@@ -285,8 +299,8 @@ try {
                     if (query($db,'SELECT 1 FROM emergency_accounts WHERE user_id=?',[$uid])->fetchColumn()) throw new Problem('Сначала отключите аварийный доступ.');
                     query($db,'DELETE FROM mfa_credentials WHERE user_id=?',[$uid]);
                 }
-                query($db,'UPDATE users SET session_version=session_version+1 WHERE id=?',[$uid]);
-                query($db,'UPDATE oidc_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL',[time(),$uid]);
+                identityEvent($db,$uid,'operator',substr($command,5),$command==='auth:emergency'?$argv[3]:'');
+                revokeStaffCredentials($db,$uid);
             });
             echo "Настройки авторизации обновлены; прежние сессии отозваны.\n"; break;
         case 'connection:assign':
@@ -317,8 +331,9 @@ try {
                 if ($command === 'user:disable' && $u['enabled'] && query($db,"SELECT 1 FROM organization_members m WHERE m.user_id=? AND m.role='owner' AND NOT EXISTS (SELECT 1 FROM organization_members n JOIN users a ON a.id=n.user_id WHERE n.organization_id=m.organization_id AND n.role='owner' AND a.enabled=1 AND n.user_id<>m.user_id)",[$u['id']])->fetchColumn()) {
                     throw new Problem('В пространстве должен оставаться активный владелец.');
                 }
-                if ($hash !== null) query($db,'UPDATE users SET password_hash=?,session_version=session_version+1 WHERE id=?',[$hash,$u['id']]);
-                else query($db,'UPDATE users SET enabled=?,session_version=session_version+1 WHERE id=?',[(int)($command==='user:enable'),$u['id']]);
+                if ($hash !== null) query($db,'UPDATE users SET password_hash=? WHERE id=?',[$hash,$u['id']]);
+                else query($db,'UPDATE users SET enabled=? WHERE id=?',[(int)($command==='user:enable'),$u['id']]);
+                identityEvent($db,(int)$u['id'],'operator',$command); revokeStaffCredentials($db,(int)$u['id']);
             });
             echo "Учётная запись обновлена.\n";
             break;

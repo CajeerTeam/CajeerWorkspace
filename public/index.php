@@ -30,12 +30,12 @@ try {
     }
     sessionOpen();
     if (($_SESSION['auth_kind']??null)==='oidc') {
-        if (!validateOidcSession($db) || time()-($_SESSION['seen']??0)>1800 || time()-($_SESSION['born']??0)>43200) killLogin();
+        if (!validateOidcSession($db) || time()-($_SESSION['seen']??0)>1800 || time()-($_SESSION['born']??0)>43200) invalidateStaffLogin($db);
         elseif (!empty($_SESSION['guest_id'])) $_SESSION['seen']=time();
     }
     $user = currentUser($db);
     if ($page==='oidc.callback') {
-        if ($method!=='GET'||!empty($_SESSION['guest_id'])||isset($_SESSION['oss_contributor'])||($user && empty($_SESSION['oidc_tx']['switch']))) throw new Problem('Недопустимый callback.',403);
+        if ($method!=='GET'||!empty($_SESSION['guest_id'])||isset($_SESSION['oss_contributor'])||($user && empty($_SESSION['oidc_tx']['switch']) && empty($_SESSION['oidc_tx']['link']))) throw new Problem('Недопустимый callback.',403);
         oidcCallback($db,$user);
     }
     if ($method === 'POST') handlePost($db,$user);

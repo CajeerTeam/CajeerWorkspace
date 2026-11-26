@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline release switch for the schema-34 release candidate (POSIX)."""
+"""Offline release switch for the schema-35 release candidate (POSIX)."""
 import argparse
 import fcntl
 import json
@@ -15,8 +15,8 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.0.1', '1.1.0'
-OLD_SCHEMA, SCHEMA = 33, 34
+OLD, NEW = '1.1.0', '1.1.1'
+OLD_SCHEMA, SCHEMA = 34, 35
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
 
@@ -195,14 +195,15 @@ def old_snapshot(folder, backend, data, objects, env):
 
 
 def migrated_matches(before, after):
-    # Migration 034 adds only an empty policy table and a ledger entry. Never
+    # Migration 035 adds only two empty security tables and a ledger entry. Never
     # exempt business tables, sequences, cash, PDF/object hashes or queue state.
     if before['schema']!=OLD_SCHEMA or after['schema']!=SCHEMA:
         return False
     a,b=dict(before),dict(after)
     a['tables'],b['tables']=dict(a['tables']),dict(b['tables'])
-    if b['tables'].pop('organization_auth_policies',None)!={'rows':0,'sha256':release.sha(b'')}:
-        return False
+    for table in ('staff_sessions','identity_history'):
+        if b['tables'].pop(table,None)!={'rows':0,'sha256':release.sha(b'')}:
+            return False
     if a['tables'].pop('schema_migrations',{}).get('rows')!=OLD_SCHEMA or b['tables'].pop('schema_migrations',{}).get('rows')!=SCHEMA:
         return False
     for d in (a,b):
@@ -252,10 +253,10 @@ def switch(root, target, backup, backup_sha, data, objects):
             require(active==OLD and target==NEW,'No recorded upgrade to roll back')
         before=m['snapshot']
         if target==OLD:
-            # Schema 34 cannot be opened by 1.0.1. An operator must restore and
+            # Schema 35 cannot be opened by 1.1.0. An operator must restore and
             # reconcile the previous snapshot offline; never silently downgrade.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 33 using 1.0.1 recovery tools') from exc
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 34 using 1.1.0 recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')

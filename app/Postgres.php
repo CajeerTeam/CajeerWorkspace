@@ -34,7 +34,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -43,7 +43,7 @@ function migratePostgres(PDO $db,bool $install): void {
 }
 // Explicit table inventory, including identities, invitations and all binary versions.
 const TRANSFER_TABLES = [
-    'users'=>'id','login_attempts'=>'bucket','organizations'=>'id','organization_auth_policies'=>'organization_id','organization_members'=>'organization_id,user_id','projects'=>'id',
+    'users'=>'id','staff_sessions'=>'handle','identity_history'=>'event_key','login_attempts'=>'bucket','organizations'=>'id','organization_auth_policies'=>'organization_id','organization_members'=>'organization_id,user_id','projects'=>'id',
     'tasks'=>'id','cash_entries'=>'id','documents'=>'id','document_versions'=>'document_id,revision','project_connections'=>'project_id,connection_key',
     'connection_results'=>'connection_key','action_log'=>'id','connection_checks'=>'id','teams'=>'id','team_members'=>'team_id,user_id',
     'project_members'=>'project_id,user_id','invitations'=>'id','organization_connections'=>'connection_key',
@@ -65,7 +65,7 @@ const TRANSFER_TABLES = [
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
     // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
-    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_hash','week_on','request_key','delivery_id','source','operation','provider'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
+    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_key','event_hash','week_on','request_key','delivery_id','source','operation','provider'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
     $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at,object_key,original_size,storage_state":"*";
     $stmt=$db->query("SELECT $columns FROM $table ORDER BY $order");
     while ($row=$stmt->fetch(PDO::FETCH_ASSOC)) {

@@ -50,21 +50,22 @@ function killLogin(): void {
 
 function currentUser(PDO $db): ?array {
     if (empty($_SESSION['uid'])) return null;
-    if (!in_array($_SESSION['auth_kind']??null,['local','emergency','oidc'],true)) { killLogin(); return null; }
+    if (!in_array($_SESSION['auth_kind']??null,['local','emergency','oidc'],true)) { invalidateStaffLogin($db); return null; }
     $now = time();
     $u = query($db,'SELECT id,name,email,role,session_version FROM users WHERE id=? AND enabled=1',[$_SESSION['uid']])->fetch();
     if (!$u || (int)$u['session_version'] !== $_SESSION['v'] || $now-$_SESSION['seen']>1800 || $now-$_SESSION['born']>43200) {
-        killLogin(); return null;
+        invalidateStaffLogin($db); return null;
     }
     $kind=$_SESSION['auth_kind'];
-    if (($kind==='local' && !localAuthEnabled()) || ($kind==='oidc' && !oidcEnabled()) || ($kind==='emergency' && (installationAuthPolicy()!=='required' || !emergencyAllowed($db,(int)$u['id'])))) { killLogin(); return null; }
+    if (($kind==='local' && !localAuthEnabled()) || ($kind==='oidc' && !oidcEnabled()) || ($kind==='emergency' && (installationAuthPolicy()!=='required' || !emergencyAllowed($db,(int)$u['id'])))) { invalidateStaffLogin($db); return null; }
+    if (!staffSessionValid($db,$u,true)) { invalidateStaffLogin($db); return null; }
     $u['auth_kind']=$kind;
     $_SESSION['seen'] = $now;
     $orgs=organizationsFor($db,(int)$u['id']);
     if (!$orgs) return array_replace($u,['organization_id'=>null,'organization_name'=>'Нет организации','organizations'=>[],'role'=>'viewer']);
     $selected=(int)($_SESSION['org']??0);
     if (!in_array($selected,array_map('intval',array_column($orgs,'id')),true)) $selected=firstAuthOrganization($db,$orgs,$kind,(int)$u['id']);
-    if ($selected===null || !organizationAuthAllowed($db,$selected,$kind,(int)$u['id'])) { killLogin(); return null; }
+    if ($selected===null || !organizationAuthAllowed($db,$selected,$kind,(int)$u['id'])) { invalidateStaffLogin($db); return null; }
     $_SESSION['org']=$selected;
     return organizationUser($db,$u,$selected)+['organizations'=>$orgs];
 }
@@ -135,7 +136,9 @@ function handlePost(PDO $db, ?array $user): never {
         $orgs=organizationsFor($db,(int)$u['id']); $org=firstAuthOrganization($db,$orgs,$kind,(int)$u['id']);
         if ($orgs && $org===null) throw new Problem('Для ваших организаций требуется вход через SkiF4er ID.',401);
         killLogin();
-        $_SESSION += ['uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>$kind,'org'=>$org];
+        $handle=bin2hex(random_bytes(32));
+        atomic($db,fn()=>staffSessionCreate($db,$u,$kind,$handle));
+        $_SESSION += ['staff_handle'=>$handle,'uid'=>(int)$u['id'],'v'=>(int)$u['session_version'],'born'=>time(),'seen'=>time(),'auth_kind'=>$kind,'org'=>$org];
         go($kind==='emergency'?'security':'overview');
     }
     if ($act==='invite.accept') {
@@ -150,6 +153,9 @@ function handlePost(PDO $db, ?array $user): never {
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
+    if ($act==='identity.link') selfLinkBegin($db,$user,$_POST['password']??null);
+    if ($act==='identity.unlink') { selfUnlink($db,$user,$_POST['password']??null); killLogin(); $_SESSION['notice']='ID отвязан. Войдите заново.'; go('login'); }
+    if ($act==='identity.revoke') { $current=selfRevokeSession($db,$user,word($_POST['handle']??'',64,'Сессия')); if ($current) { killLogin(); go('login'); } $_SESSION['notice']='Сессия отозвана.'; go('security'); }
     if ($act==='org.switch') { $u=organizationUser($db,$user,numberId($_POST['org']??0),false);
         if (!organizationAuthAllowed($db,(int)$u['organization_id'],$user['auth_kind'],(int)$user['id'])) {
             if ($user['auth_kind']==='local' && oidcEnabled()) {

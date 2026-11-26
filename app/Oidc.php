@@ -89,12 +89,12 @@ function verifyOidcJwt(string $jwt,array $jwks,string $client,?string $nonce=nul
 function oidcClaims(string $jwt,?string $nonce=null,bool $logout=false): array {
     return verifyOidcJwt($jwt,oidcHttp(oidcDiscovery()['jwks_uri']),oidcConfig()['id'],$nonce,$logout);
 }
-function oidcBegin(?string $guestToken=null,?string $staffInvite=null,?array $switch=null): never {
+function oidcBegin(?string $guestToken=null,?string $staffInvite=null,?array $switch=null,?array $link=null): never {
     if (!oidcEnabled()) throw new Problem('Вход ID отключён политикой установки.',403);
     $cfg=oidcConfig(); $d=oidcDiscovery();
-    $tx=['state'=>b64url(random_bytes(32)),'nonce'=>b64url(random_bytes(32)),'verifier'=>b64url(random_bytes(48)),'at'=>time(),'guest'=>$guestToken,'staff'=>$staffInvite,'switch'=>$switch];
+    $tx=['state'=>b64url(random_bytes(32)),'nonce'=>b64url(random_bytes(32)),'verifier'=>b64url(random_bytes(48)),'at'=>time(),'guest'=>$guestToken,'staff'=>$staffInvite,'switch'=>$switch,'link'=>$link];
     $_SESSION['oidc_tx']=$tx;
-    header('Location: '.$d['authorization_endpoint'].'?'.http_build_query(['client_id'=>$cfg['id'],'redirect_uri'=>$cfg['callback'],'response_type'=>'code','scope'=>'openid profile email','state'=>$tx['state'],'nonce'=>$tx['nonce'],'code_challenge'=>b64url(hash('sha256',$tx['verifier'],true)),'code_challenge_method'=>'S256']+($switch!==null?['prompt'=>'login']:[]),'','&',PHP_QUERY_RFC3986),true,303); exit;
+    header('Location: '.$d['authorization_endpoint'].'?'.http_build_query(['client_id'=>$cfg['id'],'redirect_uri'=>$cfg['callback'],'response_type'=>'code','scope'=>'openid profile email','state'=>$tx['state'],'nonce'=>$tx['nonce'],'code_challenge'=>b64url(hash('sha256',$tx['verifier'],true)),'code_challenge_method'=>'S256']+($link!==null?['prompt'=>'login','max_age'=>0]:($switch!==null?['prompt'=>'login']:[])),'','&',PHP_QUERY_RFC3986),true,303); exit;
 }
 function oidcTokenSet(array $response,?array $old=null): array {
     if (!is_string($response['access_token']??null)||$response['access_token']===''||strlen($response['access_token'])>65536||strtolower((string)($response['token_type']??''))!=='bearer'||!is_int($response['expires_in']??null)||$response['expires_in']<1) throw new Problem('Некорректный набор токенов.',401);

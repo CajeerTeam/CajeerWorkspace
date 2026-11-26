@@ -18,11 +18,11 @@ import release
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
 REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json')
-VERSION = '1.1.0'
-PREVIOUS = '1.0.1'
+VERSION = '1.1.1'
+PREVIOUS = '1.1.0'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
-CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation')
+CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation')
 CI = ('verify', 'postgres', 'bots-compatibility', 'recovery-postgres', 'release-rehearsal', 'package')
 MAX_JSON = 1024 * 1024
 require = recovery.require
@@ -74,7 +74,7 @@ def timestamp(value):
 def matrix(archive):
     payload=candidate.archive_payload(archive, VERSION)
     m=decode(payload['config/compatibility.json'])
-    require(m['version']==VERSION and m['schema']==34, 'Compatibility matrix mismatch')
+    require(m['version']==VERSION and m['schema']==35, 'Compatibility matrix mismatch')
     return m, recovery.sha(payload['config/compatibility.json'])
 
 
@@ -108,7 +108,7 @@ def sign_file(path, key, target):
 
 def check_reports(reports, m, archive_sha, previous_sha):
     t,p,l,r,v=(decode(reports[n]) for n in REPORTS)
-    require(t['version']==VERSION and t['schema']==34 and t['topology_ready'] is True and t['guest_ready'] is True and t['issues']==[] and len(t['projects'])==3 and len(t['staff'])==8 and len(t['teams'])==2 and t['guest_active_ids'], 'Pilot topology or guest not accepted')
+    require(t['version']==VERSION and t['schema']==35 and t['topology_ready'] is True and t['guest_ready'] is True and t['issues']==[] and len(t['projects'])==3 and len(t['staff'])==8 and len(t['teams'])==2 and t['guest_active_ids'], 'Pilot topology or guest not accepted')
     require(p['version']==VERSION and p['mode']=='live_readiness' and p['ready'] is True,'Live readiness not accepted')
     exact(p['connections'],m['integrations'])
     exact(v, ('version','archive_sha256','previous_sha256','checked_at','stand','tax_profile','signature_provider','backend','php_version','database_version','owners','integrations','scenarios','checks','ci','thresholds','open_critical_defects'))
@@ -192,7 +192,7 @@ def draft(archive, previous_sha, folder, entries):
 def statement(archive, previous_sha, reports, trust_pin):
     require(release.verify(archive)==VERSION,'Invalid release'); m,msha=matrix(archive); a_sha=recovery.digest(archive)
     summary=check_reports(reports,m,a_sha,digest(previous_sha))
-    return {'format':1,'version':VERSION,'schema':34,'archive_sha256':a_sha,'previous_sha256':previous_sha,'matrix_sha256':msha,'trust_sha256':digest(trust_pin),'reports':{n:recovery.sha(reports[n]) for n in REPORTS},'summary':summary}
+    return {'format':1,'version':VERSION,'schema':35,'archive_sha256':a_sha,'previous_sha256':previous_sha,'matrix_sha256':msha,'trust_sha256':digest(trust_pin),'reports':{n:recovery.sha(reports[n]) for n in REPORTS},'summary':summary}
 
 
 def fresh(item):
