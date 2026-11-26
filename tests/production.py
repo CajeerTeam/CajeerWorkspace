@@ -17,6 +17,7 @@ import production as prod
 import release
 import recovery
 import candidate
+import github_release as publisher
 
 class ProductionTests(unittest.TestCase):
     @classmethod
@@ -86,6 +87,59 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(result['current'],prod.PREVIOUS)
         self.assertEqual(candidate.pointer(self.root/'managed'),prod.PREVIOUS)
         self.assertEqual(result['candidate_sha256'],recovery.digest(self.archive))
+    def test_github_release_distribution(self):
+        # Real archive, five independent approvals, signing key and Git commit;
+        # only the remote API is substituted. Never publish from a unit test.
+        source=self.root/'source';source.mkdir()
+        for name,data in candidate.archive_payload(self.archive,prod.VERSION).items():
+            if name=='SHA256SUMS':continue
+            p=source/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
+        def git(*args):return subprocess.check_output(['git','-C',str(source),*args],stderr=subprocess.DEVNULL).decode().strip()
+        git('init');git('add','-f','.');git('-c','user.name=Test','-c','user.email=test@example.test','commit','-m','test source');commit=git('rev-parse','HEAD')
+        self.data['review.json']['ci']['commit']=commit
+        self.assemble();self.sign_all();self.publish()
+        bundle=self.root/'bundle';tag='v'+prod.VERSION
+        def simulate(mode):
+            assets=[];uploaded={};calls=[];row={'id':7,'tag_name':tag,'draft':True,'prerelease':False,'assets':assets}
+            def api(path,method='GET',data=None):
+                calls.append((path,method))
+                if path.startswith('/git/ref/tags/'):
+                    return {'ref':'refs/tags/'+tag,'object':{'type':'commit','sha':'c'*40 if mode=='bad-tag' else commit}}
+                if path.startswith('/releases?'):
+                    return [row] if mode=='exists' else []
+                if path=='/releases' and method=='POST':
+                    self.assertTrue(data['draft']);self.assertEqual(data['target_commitish'],commit);return row
+                if path=='/releases/7' and method=='PATCH':row['draft']=False;return row
+                if path=='/releases/7':return row
+                raise AssertionError(path)
+            def upload(rid,path):
+                self.assertEqual(rid,7);uploaded[path.name]=path.read_bytes()
+                a={'name':path.name,'state':'uploaded','size':path.stat().st_size,'digest':'sha256:'+recovery.digest(path)}
+                if mode=='bad-asset' and path.name==prod.NAME:a['digest']='sha256:'+'0'*64
+                assets.append(a);return a
+            args=(bundle,self.registry,self.pin,self.keys/'release.pem',source,api,upload)
+            if mode!='ok':
+                with self.assertRaises(ValueError):publisher.publish(*args)
+                self.assertNotIn(('/releases/7','PATCH'),calls)
+                if mode in ('bad-tag','exists'):self.assertFalse(uploaded)
+                return
+            result=publisher.publish(*args);self.assertEqual(result['status'],'published')
+            self.assertEqual(set(uploaded),{prod.NAME,prod.NAME+'.sig',publisher.META,publisher.SIG})
+            m=json.loads(uploaded[publisher.META]);self.assertEqual(m['commit'],commit);self.assertEqual(m['schema'],36)
+            self.assertEqual(m['supported_from'][0]['version'],prod.PREVIOUS)
+            self.assertEqual(m['acceptance_sha256'],recovery.digest(bundle/'acceptance.json'))
+            self.assertEqual(m['package']['sha256'],recovery.sha(uploaded[prod.NAME]))
+            self.assertNotIn(b'Synthetic test fixture',uploaded[publisher.META])
+            for name in (publisher.META,publisher.SIG):(self.root/name).write_bytes(uploaded[name])
+            candidate.verify_signature(self.root/publisher.META,self.root/publisher.SIG,self.registry/'release.pub.pem',m['release_key_sha256'])
+            script=r"require 'app/bootstrap.php'; \Workspace\updateManifest(file_get_contents($argv[1]),file_get_contents($argv[2]),file_get_contents($argv[3]),$argv[4],$argv[5],$argv[6]);"
+            subprocess.run(['php','-r',script,str(self.root/publisher.META),str(self.root/publisher.SIG),str(self.registry/'release.pub.pem'),m['release_key_sha256'],prod.VERSION,commit],cwd=ROOT,check=True,capture_output=True)
+        for mode in ('ok','bad-tag','exists','bad-asset'):
+            with self.subTest(mode=mode):simulate(mode)
+        (source/'README.md').write_text('different contents')
+        git('add','README.md');git('-c','user.name=Test','-c','user.email=test@example.test','commit','-m','changed source')
+        with self.assertRaises(ValueError):publisher.check_source(self.archive,source,git('rev-parse','HEAD'))
+
     def test_expired_review_blocks_publish(self):
         old=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=8)).isoformat()
         self.data['review.json']['checked_at']=self.data['topology.json']['checked_at']=old

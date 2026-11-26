@@ -18,8 +18,8 @@ import release
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
 REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json')
-VERSION = '1.1.2'
-PREVIOUS = '1.1.1'
+VERSION = '1.2.0'
+PREVIOUS = '1.1.2'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
 CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation')

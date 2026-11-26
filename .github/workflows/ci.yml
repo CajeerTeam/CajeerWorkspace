@@ -18,6 +18,7 @@ jobs:
       - run: find app public views tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - run: php -l bin/workspace
       - run: php bin/workspace doctor
+      - run: php tests/workspace_updates.php
       - run: php tests/integration_profiles.php
       - run: php tests/pilot_db.php
       - run: python3 tests/recovery.py
@@ -330,13 +331,13 @@ jobs:
           set -euo pipefail
           previous=''
           while IFS= read -r commit; do
-            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.1.1' ]]; then
+            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.1.2' ]]; then
               previous="$commit"
               break
             fi
           done < <(git log --first-parent --format=%H HEAD)
           if [[ -z "$previous" ]]; then
-            echo 'Actual 1.1.1 predecessor missing from Git history; release gate blocked.' >&2
+            echo 'Actual 1.1.2 predecessor missing from Git history; release gate blocked.' >&2
             exit 1
           fi
           # Use the last first-parent release ancestor, not an unrelated branch or a version-edited candidate.
@@ -344,6 +345,6 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/previous-source"
           git archive "$previous" | tar -x -C "$RUNNER_TEMP/previous-source"
           python3 "$RUNNER_TEMP/previous-source/tools/release.py" build --output "$RUNNER_TEMP/previous-dist"
-          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.1.1.zip"
+          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.1.2.zip"
           WORKSPACE_CANDIDATE_REQUIRE_NATIVE=1 python3 tests/candidate.py
           python3 tests/production.py

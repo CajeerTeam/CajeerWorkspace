@@ -154,6 +154,7 @@ function handlePost(PDO $db, ?array $user): never {
     if (in_array($act,['mfa.enroll','mfa.verify'],true)) { verifyMfa($db,$user,word($_POST['code']??'',6,'Код'),$act==='mfa.enroll'); $_SESSION['notice']='Второй фактор подтверждён на 5 минут.'; go('security'); }
     if (($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) throw new Problem('Подтвердите второй фактор.',403);
     requireMfa($act);
+    if ($act==='workspace.update.check') { $u=organizationUser($db,$user); requireUpdateAdmin($u); authThrottle($db,'workspace-updates:'.(int)$u['id'],6); $_SESSION['workspace_update_report']=workspaceUpdateReport($db); go('workspace_updates'); }
     if ($act==='identity.link') selfLinkBegin($db,$user,$_POST['password']??null);
     if ($act==='identity.unlink') { selfUnlink($db,$user,$_POST['password']??null); killLogin(); $_SESSION['notice']='ID отвязан. Войдите заново.'; go('login'); }
     if ($act==='identity.revoke') { $current=selfRevokeSession($db,$user,word($_POST['handle']??'',64,'Сессия')); if ($current) { killLogin(); go('login'); } $_SESSION['notice']='Сессия отозвана.'; go('security'); }
@@ -456,6 +457,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     if ($page === 'login') go('overview');
     if (empty($user['organization_id'])) go('invite');
     $user=organizationUser($db,$user);
+    if ($page==='workspace_updates') { if (!updateAdmin($user)) throw new Problem('Нет доступа к обновлениям установки.',403); $report=$_SESSION['workspace_update_report']??null; if ($report && (($report['installed_version']??null)!==VERSION || ($report['trust_pin']??null)!==(getenv('WORKSPACE_UPDATE_KEY_SHA256')?:''))) { unset($_SESSION['workspace_update_report']); $report=null; } pageView('workspace_updates','Обновления Workspace',$user,['report'=>$report]); return; }
     [$scope,$scopeArgs]=projectScope($db,$user);
     $navRights=[];
     foreach (['finance','legal','connections','audit'] as $right) $navRights[$right]=hasProjectRight($db,$user,$right) || can($user,$right);

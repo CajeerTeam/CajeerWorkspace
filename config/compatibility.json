@@ -1,5 +1,5 @@
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "schema": 36,
   "authentication": {"installation_modes": ["local", "mixed", "required"], "organization_modes": ["inherit", "required"], "legacy_default": "preserve"},
   "runtime": {"php_ci": ["8.3", "8.4", "8.5"], "php_min": "8.3", "sqlite_min": "3.27.0", "postgres_min": "14", "postgres_ci": ["14", "16"], "python_min": "3.9", "architecture": 64},

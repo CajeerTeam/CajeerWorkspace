@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.1.1 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.1.2 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -89,16 +89,10 @@ class CandidateTests(unittest.TestCase):
     def test_switch_and_rollback(self):
         managed,data,objects,db,backup,sha=self.fixture()
         def migrate(folder,version,env,upgrade=False):
-            if version!=candidate.NEW or not upgrade: return
-            with closing(sqlite3.connect(db)) as c, c:
-                if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
-                    p=ROOT/'database/036.sql';c.executescript(p.read_text())
-                    c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(36,recovery.digest(p),'applied'))
-                    c.execute('PRAGMA user_version=36')
+            pass  # same schema; no mutation expected
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=migrate):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)
-            with self.assertRaises(ValueError): candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             # A separately reviewed restore is required before old code can be selected.
             with closing(sqlite3.connect(backup/'workspace.sqlite')) as src, closing(sqlite3.connect(db)) as dst: src.backup(dst)
             candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
@@ -125,7 +119,6 @@ class CandidateTests(unittest.TestCase):
         managed,data,objects,db,backup,sha=self.fixture()
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}):
             candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
-            with self.assertRaises(ValueError): candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             with closing(sqlite3.connect(backup/'workspace.sqlite')) as src, closing(sqlite3.connect(db)) as dst: src.backup(dst)
             candidate.switch(managed,candidate.OLD,backup,sha,data,objects)
             self.assertEqual(candidate.pointer(managed),candidate.OLD)

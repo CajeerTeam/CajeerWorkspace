@@ -12,6 +12,7 @@ if ($user && !empty($user['organization_id'])) {
     if ($user['nav_rights']['audit']??false) $nav['audit']='Аудит';
     if (can($user,'people')) $nav['team']='Команда';
 }
+if ($user && updateAdmin($user)) $nav['workspace_updates']='Обновления Workspace';
 if ($user) { $nav['invite']='Приглашение'; $nav['security']='Безопасность'; }
 if ($user && ($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) $nav=['security'=>'Безопасность'];
 $current = match ($view) {'project','task','workload','oss','github','releases','infrastructure','deployments'=>'projects','document'=>'documents',default=>$view};
