@@ -40,7 +40,8 @@ function updateUrlAllowed(string $url,bool $asset): bool {
     $p=parse_url($url);
     if (!is_array($p)||($p['scheme']??'')!=='https'||isset($p['user'])||isset($p['pass'])||isset($p['fragment'])||isset($p['port']))return false;
     if (!$asset)return ($p['host']??'')==='api.github.com'&&str_starts_with($p['path']??'','/repos/'.UPDATE_REPO.'/');
-    return in_array($p['host']??'', ['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'],true) && (($p['host']??'')!=='github.com'||str_starts_with($p['path']??'','/'.UPDATE_REPO.'/releases/download/'));
+    if(($p['host']??'')==='github.com')return !isset($p['query'])&&preg_match('~\A/'.preg_quote(UPDATE_REPO,'~').'/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/(?:workspace-release\.json(?:\.sig)?|CajeerWorkspace-[0-9]+\.[0-9]+\.[0-9]+\.zip(?:\.sig)?)\z~',$p['path']??'')===1;
+    return in_array($p['host']??'', ['release-assets.githubusercontent.com','objects.githubusercontent.com'],true)&&!empty($p['path']);
 }
 function updateHttp(string $url,int $limit,bool $asset=false,?float $overallDeadline=null): string {
     updateAssert(function_exists('curl_init'),'Недоступен cURL.');
@@ -115,14 +116,14 @@ function updateAsset(array $row,string $name,int $limit): array {
     updateAssert(count($matches)===1,'Отсутствующий или неоднозначный asset: '.$name);$a=$matches[0];
     updateAssert(($a['state']??null)==='uploaded'&&is_int($a['size']??null)&&$a['size']>0&&$a['size']<=$limit&&is_string($a['digest']??null)&&preg_match('/\Asha256:[a-f0-9]{64}\z/',$a['digest'])===1,'Некорректный asset: '.$name);return $a;
 }
-function updateDiscover(array $env,string $pem,string $pin,?callable $http=null): array {
+function updateDiscover(array $env,string $pem,string $pin,?callable $http=null,?callable $capture=null): array {
     $deadline=microtime(true)+22;
-    $http??=static fn($url,$limit,$asset)=>updateHttp($url,$limit,$asset,$deadline);$best=null;$version=null;
+    $http??=static fn($url,$limit,$asset)=>updateHttp($url,$limit,$asset,$deadline);$best=null;$version=null;$seen=[];
     for($page=1;$page<=3;$page++){
         $rows=updateJson($http(UPDATE_API.'/releases?per_page=100&page='.$page,2097152,false));updateAssert(array_is_list($rows),'Некорректный список релизов.');
         foreach($rows as $row){if(!is_array($row)||($row['draft']??null)!==false||($row['prerelease']??null)!==false)continue;$tag=$row['tag_name']??null;
             if(!is_string($tag)||!str_starts_with($tag,'v')||!updateVersion(substr($tag,1)))continue;$v=substr($tag,1);
-            updateAssert($v!==$version,'Неоднозначный стабильный выпуск.');
+            updateAssert(!isset($seen[$v]),'Неоднозначный стабильный выпуск.');$seen[$v]=true;
             if($version===null||version_compare($v,$version,'>')){$best=$row;$version=$v;}
         }
         if(count($rows)<100)break;updateAssert($page<3,'Список релизов превышает предел проверки.');
@@ -133,13 +134,33 @@ function updateDiscover(array $env,string $pem,string $pin,?callable $http=null)
     updateAssert(($ref['ref']??null)==='refs/tags/'.$tag&&($ref['object']['type']??null)==='commit'&&is_string($commit)&&preg_match('/\A[a-f0-9]{40}\z/',$commit)===1,'Тег не указывает непосредственно на коммит.');
     $base='https://github.com/'.UPDATE_REPO.'/releases/download/'.$tag.'/';
     $download=static function(string $n,int $limit)use($best,$http,$base){$a=updateAsset($best,$n,$limit);$b=$http($base.$n,$limit,true);updateAssert(strlen($b)===$a['size']&&hash_equals($a['digest'],'sha256:'.hash('sha256',$b)),'Изменённый asset: '.$n);return $b;};
-    $m=updateManifest($download(UPDATE_META,65536),$download(UPDATE_META.'.sig',16384),$pem,$pin,$version,$commit);
+    $raw=$download(UPDATE_META,65536);$signature=$download(UPDATE_META.'.sig',16384);
+    $m=updateManifest($raw,$signature,$pem,$pin,$version,$commit);
     $p=updateAsset($best,$name,134217728);$s=updateAsset($best,$name.'.sig',16384);
     updateAssert($p['size']===$m['package']['size']&&hash_equals($p['digest'],'sha256:'.$m['package']['sha256'])&&hash_equals($s['digest'],'sha256:'.$m['package']['signature_sha256']),'Пакет или подпись не соответствуют подписанным метаданным.');
+    if($capture!==null)$capture($raw,$signature,$s['size']);
     return updateCompatibility($m,$env)+['release'=>$m];
 }
-function workspaceUpdateReport(PDO $db): array {
-    $base=['checked_at'=>gmdate('c'),'installed_version'=>VERSION,'installed_schema'=>schemaVersion($db),'trust_pin'=>getenv('WORKSPACE_UPDATE_KEY_SHA256')?:''];
-    try{[$pem,$pin]=updateKey();}catch(\Throwable $e){return $base+['status'=>'not_configured','reasons'=>[$e->getMessage()]];}
-    try{return $base+updateDiscover(updateEnvironment($db),$pem,$pin);}catch(\RuntimeException $e){return $base+['status'=>'unverified','reasons'=>[$e->getMessage()]];}catch(\Throwable){return $base+['status'=>'unverified','reasons'=>['Некорректный ответ GitHub или ошибка проверки.']];}
+// FPM reads only the bounded status document; it cannot start the downloader.
+function updateStateDirectory(): string {
+    $dir=getenv('WORKSPACE_UPDATE_STATE_DIR')?:'';
+    updateAssert($dir!==''&&str_starts_with($dir,'/')&&realpath($dir)===$dir&&is_dir($dir)&&!is_link($dir),'Настройте отдельный абсолютный WORKSPACE_UPDATE_STATE_DIR.');
+    $mode=fileperms($dir);updateAssert($mode!==false&&($mode&0027)===0,'Каталог обновлений не должен разрешать запись группе или доступ остальным.');
+    $root=realpath(ROOT);$data=realpath(getenv('WORKSPACE_DATA')?:ROOT.'/var');
+    updateAssert($root!==false&&$dir!==$root&&!str_starts_with($dir,$root.'/')&&!str_starts_with($root,$dir.'/')&&($data===false||($dir!==$data&&!str_starts_with($dir,$data.'/')&&!str_starts_with($data,$dir.'/'))),'Каталог обновлений должен быть отдельным от дерева приложения и данных.');
+    return $dir;
+}
+function updateStoredReport(int $schema): ?array {
+    try {
+        $dir=updateStateDirectory();$path=$dir.'/report.json';clearstatcache(true,$path);
+        if(!is_file($path)||is_link($path)||($mode=fileperms($path))===false||($mode&0027)!==0)return null;
+        $raw=@file_get_contents($path,false,null,0,131073);if(!is_string($raw)||strlen($raw)>131072)return null;
+        $r=updateJson($raw);$pin=getenv('WORKSPACE_UPDATE_KEY_SHA256')?:'';
+        if(($r['installed_version']??null)!==VERSION||($r['installed_schema']??null)!==$schema||($r['trust_pin']??null)!==$pin)return null;
+        try{updateKey();}catch(\Throwable){if(($r['status']??null)!=='failed'||isset($r['release'])||isset($r['package_result']))return null;}
+        $time=strtotime(is_string($r['checked_at']??null)?$r['checked_at']:'');
+        if($time===false||$time>time()+60||$time<time()-86400)return null;
+        if(!is_string($r['status']??null)||!is_array($r['reasons']??null)||!in_array($r['operation']??null,['check','download','plan'],true))return null;
+        return $r;
+    } catch(\Throwable){return null;}
 }

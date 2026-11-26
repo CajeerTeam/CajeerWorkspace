@@ -39,6 +39,8 @@ CajeerWorkspace PHP $version
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
   php bin/workspace updates:check
+  php bin/workspace updates:download
+  php bin/workspace updates:plan /абсолютный/путь/к/исходному.zip
   php bin/workspace auth:check
   php bin/workspace auth:acceptance
   php bin/workspace auth:policy
@@ -172,8 +174,11 @@ try {
     $db = database();
     switch ($command) {
         case 'updates:check':
-            if ($argc!==2) throw new Problem('Формат: updates:check');
-            $report=workspaceUpdateReport($db); echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; exit(in_array($report['status'],['empty','compatible','current','ahead'],true)?0:1);
+        case 'updates:download':
+        case 'updates:plan':
+            if ($argc!==($command==='updates:plan'?3:2)) throw new Problem('Формат: '.$command.($command==='updates:plan'?' /абсолютный/путь/к/исходному.zip':''));
+            require_once ROOT.'/app/WorkspaceUpdateCli.php';
+            $report=updateCli($db,substr($command,8),$argv[2]??null); echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; exit(in_array($report['status'],['empty','compatible','current','ahead','downloaded','planned'],true)?0:1);
         case 'auth:history':
             if ($argc!==3) throw new Problem('Формат: auth:history EMAIL');
             $u=entity($db,'SELECT id FROM users WHERE LOWER(email)=?',[normalizedEmail($argv[2])]);
