@@ -51,3 +51,5 @@ require_once __DIR__ . '/WorkspaceUpdates.php';
 require_once __DIR__ . '/Assistant.php';
 require_once __DIR__ . '/AssistantPolicy.php';
 require_once __DIR__ . '/AssistantDraft.php';
+require_once __DIR__ . '/AssistantOps.php';
+require_once __DIR__ . '/AssistantMcp.php';

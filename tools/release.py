@@ -14,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = 'SHA256SUMS'
 # Explicit release inventory: no data, private configuration, VCS, secrets or build outputs.
-FILES = '''app/AssistantDraft.php views/assistant_draft.php tests/assistant_draft_unit.php tests/assistant_draft_db.php app/AssistantPolicy.php app/Assistant.php views/assistant.php tests/assistant_unit.php tests/assistant_db.php docs/AI_ASSISTANT.md tools/update_schedule.py tests/update_schedule.py app/UpdateMaintenance.php tools/update_install.py tests/update_install.py app/WorkspaceUpdateCli.php tools/update_package.py tests/update_package.py app/WorkspaceUpdates.php views/workspace_updates.php tools/github_release.py tests/workspace_updates.php docs/WORKSPACE_UPDATES.md LICENSE README.md ROADMAP.md VERSION composer.json .gitignore database/schema-freeze.json docs/CANDIDATE.md docs/PRODUCTION.md config/compatibility.json tools/production.py tests/production.py tools/candidate.py tests/candidate.py tests/candidate_unit.php
+FILES = '''app/AssistantOps.php app/AssistantMcp.php views/assistant_ops.php tests/assistant_ops_unit.php tests/assistant_ops_db.php tools/ai_eval.php app/AssistantDraft.php views/assistant_draft.php tests/assistant_draft_unit.php tests/assistant_draft_db.php app/AssistantPolicy.php app/Assistant.php views/assistant.php tests/assistant_unit.php tests/assistant_db.php docs/AI_ASSISTANT.md tools/update_schedule.py tests/update_schedule.py app/UpdateMaintenance.php tools/update_install.py tests/update_install.py app/WorkspaceUpdateCli.php tools/update_package.py tests/update_package.py app/WorkspaceUpdates.php views/workspace_updates.php tools/github_release.py tests/workspace_updates.php docs/WORKSPACE_UPDATES.md LICENSE README.md ROADMAP.md VERSION composer.json .gitignore database/schema-freeze.json docs/CANDIDATE.md docs/PRODUCTION.md config/compatibility.json tools/production.py tests/production.py tools/candidate.py tests/candidate.py tests/candidate_unit.php
 app/Recovery.php app/Pilot.php app/Reliability.php app/Discovery.php app/Incidents.php app/Bots.php app/Logs.php app/Editorial.php app/Lite.php app/LiteWorker.php app/Forum.php app/Book.php app/Engine.php app/Core.php app/Contracts.php app/Preparation.php app/Signing.php app/Retention.php app/TaxUk.php app/Economics.php app/Banking.php app/Accounting.php app/Invoices.php app/Deployments.php app/Infrastructure.php app/Releases.php app/GitHub.php app/Oss.php app/Clients.php app/Workload.php app/Planning.php app/Oidc.php app/Auth.php app/AuthPolicy.php app/Identity.php app/AuthAcceptance.php app/Permissions.php app/Payments.php app/Organizations.php app/Postgres.php app/Migrations.php app/Integrations.php app/Web.php app/Workspace.php app/bootstrap.php
 bin/workspace config/connections.example.json docs/RECOVERY.md docs/PILOT.md docs/INTEGRATIONS.md docs/UPGRADE.md docs/ORGANIZATIONS.md docs/PERMISSIONS.md docs/AUTHENTICATION.md docs/PLANNING.md docs/WORKLOAD.md docs/CLIENTS.md docs/OSS.md docs/GITHUB.md docs/RELEASES.md docs/INFRASTRUCTURE.md docs/DEPLOYMENTS.md docs/INVOICES.md docs/ACCOUNTING.md docs/BANKING.md docs/ECONOMICS.md docs/UK_VAT.md docs/CONTRACTS.md docs/PREPARATION.md docs/SIGNING.md docs/RETENTION.md docs/ENGINE.md docs/BOOK.md docs/FORUM.md docs/LITE.md docs/EDITORIAL.md docs/LOGS.md docs/BOTS.md docs/RELIABILITY.md docs/DISCOVERY.md docs/INCIDENTS.md integrations/cajeerbots-1.0.2-workspace.patch
 public/health.php public/index.php public/style.css
@@ -70,13 +70,13 @@ def validate_payload(payload):
     expected = set(FILES) | {f'database/{i:03}.sql' for i in range(1, n + 1)} | {f'database/postgresql/{i:03}.sql' for i in range(1, n + 1)}
     if set(payload) != expected:
         raise ValueError('Unexpected or missing distribution files')
-    if sha(payload["database/schema-freeze.json"]) != "1777d09cddb00ec7be7804f2f7e131bcfa9d1b57a5eee846faf9049f4d94a3f4":
+    if sha(payload["database/schema-freeze.json"]) != "877ecb1abefc870358102d315bff4fc959639eb232df673ab9dd1a3d22bf4b51":
         raise ValueError("Frozen schema manifest changed")
     freeze = json.loads(payload["database/schema-freeze.json"])
     migrations = {name: sha(data) for name, data in payload.items() if name.startswith("database/") and name.endswith(".sql")}
     if freeze != {"schema": n, "migrations": migrations}:
         raise ValueError("Frozen schema mismatch")
-    if sha(payload["config/compatibility.json"]) != "e48479a747c5df0067a6ef8fd1650da455b6ddd67eba10b9a85278bbe78958d8":
+    if sha(payload["config/compatibility.json"]) != "0c38fa61605648a36722eaf889c6f942598141d3fd633d59e96bd5d9dbee43c9":
         raise ValueError("Release compatibility matrix changed")
     matrix = json.loads(payload["config/compatibility.json"])
     if matrix["version"] != version or matrix["schema"] != n:

@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.3.2';
-const SCHEMA_VERSION = 37;
+const VERSION = '1.3.3';
+const SCHEMA_VERSION = 38;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];

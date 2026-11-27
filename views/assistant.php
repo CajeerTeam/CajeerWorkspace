@@ -27,3 +27,5 @@
 <?php if(!empty($history)): ?><section class="panel"><div class="panelhead"><h2>Моя история по проекту</h2></div><?php foreach($history as $item): ?><details class="inset"><summary><?= h(gmdate('Y-m-d H:i:s',$item['observed'])) ?> UTC</summary><p><?= nl2br(h($item['answer']),false) ?></p><?php foreach($item['links'] as $source): ?><p><a href="<?= h($source['href']) ?>">[<?= h($source['ref']) ?>] <?= h($source['title']) ?></a></p><?php if(in_array($source['kind'],AI_SENSITIVE,true)): ?><?php foreach(aiFactLines($source['fields']) as [$label,$value]): ?><div class="splitrow"><span><?= h($label) ?></span><b><?= h($value) ?></b></div><?php endforeach ?><?php endif ?><?php endforeach ?></details><?php endforeach ?></section><?php endif ?>
 
 <?php if($selected && isset($draftOptions)) require ROOT.'/views/assistant_draft.php'; ?>
+
+<?php if(isset($ops)) require ROOT.'/views/assistant_ops.php'; ?>

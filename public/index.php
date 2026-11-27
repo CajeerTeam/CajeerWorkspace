@@ -10,6 +10,7 @@ $user = null;
 try {
     $db = database();
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if(in_array($path=parse_url($_SERVER['REQUEST_URI']??'/',PHP_URL_PATH),['/mcp','/oauth/authorize','/oauth/token','/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp','/.well-known/oauth-authorization-server'],true)){try{aiMcpRoute($db,$path,$method);}catch(Problem $e){aiMcpJson(['error'=>'request_denied'],$e->status);}}
     $page=word($_GET['p']??'overview',32,'Страница');
     if ($page==='retention.share') {
         if($method==='GET'){$token=word($_GET['token']??'',64,'Ссылка');retentionFindLink($db,$token);header('Content-Type: text/html; charset=utf-8');echo '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Выдача документа</title><h1>Скачать документ</h1><p>Выдача регистрируется, число скачиваний ограничено.</p><form method="post" action="./?p=retention.share"><input type="hidden" name="token" value="'.h($token).'"><button>Скачать PDF</button></form></html>';exit;}

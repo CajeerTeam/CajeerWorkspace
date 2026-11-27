@@ -173,6 +173,13 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'ai.cancel':
+        case 'ai.rate':
+            aiOpsAction($db,$user,$act,word($_POST['handle']??'',32,'Вызов'),$_POST['quality']??null);go('assistant');
+        case 'ai.chatgpt.policy':
+            aiMcpSetPolicy($db,$user,($_POST['enabled']??'')==='1');go('assistant');
+        case 'ai.chatgpt.revoke':
+            aiMcpRevoke($db,$user);go('assistant');
         case 'ai.policy':
             aiPolicySave($db,$user,$_POST,aiConfig());unset($_SESSION['ai_draft']);go('assistant');
         case 'ai.draft.create':
@@ -212,7 +219,7 @@ function handlePost(PDO $db, ?array $user): never {
             };
             $answer=aiAsk($db,$user,$pid,$topic,$term,$question,$cfg,$recheck);
             $fresh=$freshUser;$projects=aiProjects($db,$fresh,$cfg);$selected=aiProject($db,$fresh,$pid,$cfg);
-            pageView('assistant',PAGE_TITLES['assistant'],$fresh,['projects'=>$projects,'selected'=>$selected,'topic'=>$topic,'term'=>$term,'question'=>$question,'result'=>$answer,'policy'=>aiPolicy($db,(int)$fresh['organization_id'],$cfg),'models'=>aiModels($cfg),'topics'=>aiTopicsFor($db,$fresh,$pid,aiPolicy($db,(int)$fresh['organization_id'],$cfg)),'history'=>[]]);exit;
+            pageView('assistant',PAGE_TITLES['assistant'],$fresh,['projects'=>$projects,'selected'=>$selected,'topic'=>$topic,'term'=>$term,'question'=>$question,'result'=>$answer,'policy'=>aiPolicy($db,(int)$fresh['organization_id'],$cfg),'models'=>aiModels($cfg),'topics'=>aiTopicsFor($db,$fresh,$pid,aiPolicy($db,(int)$fresh['organization_id'],$cfg)),'history'=>[],'ops'=>aiOpsReport($db,$fresh)]);exit;
         case 'reliability.reconcile':
             $pid=$projectId();$result=relReconcile($db,$user,$pid);$_SESSION['notice']='Сверка поставлена в очередь: '.json_encode($result,JSON_THROW_ON_ERROR);go('reliability',['project'=>$pid]);
         case 'reliability.verify':
@@ -523,6 +530,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $history=$selected&&in_array($policy['model'],$models,true)?aiHistory($db,$user,(int)$selected['id'],$cfg):[];
             if($selected){$current=currentUser($db);if(!$current||(int)$current['id']!==(int)$user['id']||(int)$current['organization_id']!==(int)$user['organization_id'])throw new Problem('Сессия изменена.',403);if(aiPolicy($db,(int)$user['organization_id'],$cfg,$user['role']==='owner')!==$policy)throw new Problem('Политика изменена.',409);aiProject($db,$current,(int)$selected['id'],$cfg);}
             $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'role','term'=>'','question'=>'','result'=>null,'policy'=>$policy,'models'=>$models,'topics'=>$selected?aiTopicsFor($db,$user,(int)$selected['id'],$policy):[],'history'=>$history];
+            $data['ops']=aiOpsReport($db,$user);$data['delegation']=aiMcpAvailable()?aiMcpPolicy($db,(int)$user['organization_id']):null;
             $data['draftOptions']=[];$data['draftReview']=null;$data['draftError']=null;
             $pending=$_SESSION['ai_draft']??null;
             if(is_array($pending)&&($pending['expires']<=time()||$pending['user']!==(int)$user['id']||$pending['org']!==(int)$user['organization_id'])){unset($_SESSION['ai_draft']);$pending=null;}

@@ -44,7 +44,7 @@ function aiReserve(PDO $db,int $org,array $policy): void {
         query($db,'INSERT INTO ai_daily_usage(organization_id,day_on,requests) VALUES(?,?,1) ON CONFLICT(organization_id,day_on) DO UPDATE SET requests=ai_daily_usage.requests+1',[$org,$day]);
     });
 }
-function aiPurge(PDO $db): int {return query($db,'DELETE FROM ai_history WHERE expires_at<=?',[time()])->rowCount();}
+function aiPurge(PDO $db): int {aiOpsPurge($db);return query($db,'DELETE FROM ai_history WHERE expires_at<=?',[time()])->rowCount();}
 function aiFingerprint(array $context): string {return hash('sha256',json_encode($context,JSON_THROW_ON_ERROR));}
 function aiRemember(PDO $db,array $u,array $context,array $answer,array $policy): void {
     if($policy['days']===0)return;

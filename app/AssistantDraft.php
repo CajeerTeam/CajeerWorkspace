@@ -110,10 +110,10 @@ function aiDraftCreate(PDO $db,array $u,int $p,array $form,array $cfg,callable $
     $input=aiDraftInput($form);$question=word($form['question']??'',1200,'Задание');$fresh=$recheck();aiDraftSameUser($u,$fresh);
     $snapshot=aiDraftContext($db,$fresh,$p,$input,$cfg);$now=time();$payload=aiDraftPayload($snapshot,$input,$question,$now);
     authThrottle($db,'ai.user:'.$u['id'],8);authThrottle($db,'ai.installation',40);aiReserve($db,(int)$u['organization_id'],$snapshot['context']['policy']);
-    $raw=($transport??__NAMESPACE__.'\\aiHttp')($payload,$cfg['key']);$fresh=$recheck();aiDraftSameUser($u,$fresh);
+    return aiOpsRun($db,$fresh,$p,$snapshot['context']['role'],'draft.'.$input['kind'],$payload,$cfg['key'],$transport,function($raw)use($db,$u,$p,$input,$cfg,$recheck,$snapshot,$now){$fresh=$recheck();aiDraftSameUser($u,$fresh);
     $after=aiDraftContext($db,$fresh,$p,$input,$cfg);if($snapshot!==$after)throw new Problem('Исходные данные изменились. Создайте новый черновик.',409);
     $draft=aiDraftResponse($raw,$after,$input);
-    return ['handle'=>bin2hex(random_bytes(16)),'user'=>(int)$u['id'],'org'=>(int)$u['organization_id'],'session'=>staffHandle(),'project'=>$p,'created'=>$now,'expires'=>$now+AI_DRAFT_TTL,'input'=>$input,'hash'=>aiFingerprint($after),'draft'=>$draft];
+    return ['handle'=>bin2hex(random_bytes(16)),'user'=>(int)$u['id'],'org'=>(int)$u['organization_id'],'session'=>staffHandle(),'project'=>$p,'created'=>$now,'expires'=>$now+AI_DRAFT_TTL,'input'=>$input,'hash'=>aiFingerprint($after),'draft'=>$draft];});
 }
 function aiDraftReview(PDO $db,array $u,int $p,array $proposal,array $cfg): array {
     if(($proposal['user']??null)!==(int)$u['id']||($proposal['org']??null)!==(int)$u['organization_id']||($proposal['project']??null)!==$p||($proposal['session']??null)!==staffHandle()||($proposal['expires']??0)<=time())throw new Problem('Черновик истёк или недоступен.',409);

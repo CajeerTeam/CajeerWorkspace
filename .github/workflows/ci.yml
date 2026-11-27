@@ -23,6 +23,8 @@ jobs:
       - run: php tests/assistant_db.php
       - run: php tests/assistant_draft_unit.php
       - run: php tests/assistant_draft_db.php
+      - run: php tests/assistant_ops_unit.php
+      - run: php tests/assistant_ops_db.php
       - run: python3 -B tests/update_package.py
       - run: python3 -B tests/update_install.py
       - run: python3 -B tests/update_schedule.py
@@ -159,7 +161,7 @@ jobs:
     strategy:
       matrix:
         postgres: ['14', '16']
-        suite: ['tenant', 'permissions', 'auth', 'identity', 'auth_acceptance', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs', 'bots', 'incidents', 'discovery', 'reliability', 'assistant', 'assistant_draft']
+        suite: ['tenant', 'permissions', 'auth', 'identity', 'auth_acceptance', 'planning', 'workload', 'clients', 'oss', 'github', 'project_release', 'infra', 'deploy', 'invoice', 'accounting', 'bank', 'economics', 'tax', 'contracts', 'preparation', 'signing', 'retention', 'engine', 'book', 'forum', 'lite', 'editorial', 'logs', 'bots', 'incidents', 'discovery', 'reliability', 'assistant', 'assistant_draft', 'assistant_ops']
     services:
       db:
         image: postgres:${{ matrix.postgres }}
@@ -254,6 +256,8 @@ jobs:
         run: php tests/assistant_db.php --postgres
       - if: matrix.suite == 'assistant_draft'
         run: php tests/assistant_draft_db.php --postgres
+      - if: matrix.suite == 'assistant_ops'
+        run: php tests/assistant_ops_db.php --postgres
       - if: matrix.suite == 'discovery'
         run: php tests/discovery_db.php --postgres
       - if: matrix.suite == 'lite'
@@ -343,13 +347,13 @@ jobs:
           set -euo pipefail
           previous=''
           while IFS= read -r commit; do
-            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.3.1' ]]; then
+            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.3.2' ]]; then
               previous="$commit"
               break
             fi
           done < <(git log --first-parent --format=%H HEAD)
           if [[ -z "$previous" ]]; then
-            echo 'Actual 1.3.1 predecessor missing from Git history; release gate blocked.' >&2
+            echo 'Actual 1.3.2 predecessor missing from Git history; release gate blocked.' >&2
             exit 1
           fi
           # Use the last first-parent release ancestor, not an unrelated branch or a version-edited candidate.
@@ -357,7 +361,7 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/previous-source"
           git archive "$previous" | tar -x -C "$RUNNER_TEMP/previous-source"
           python3 "$RUNNER_TEMP/previous-source/tools/release.py" build --output "$RUNNER_TEMP/previous-dist"
-          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.3.1.zip"
+          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.3.2.zip"
           WORKSPACE_CANDIDATE_REQUIRE_NATIVE=1 python3 tests/candidate.py
           python3 -B tests/update_install.py InstallTests.test_install_finish InstallTests.test_scheduler_uses_real_installer
           python3 tests/production.py

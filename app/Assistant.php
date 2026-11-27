@@ -118,15 +118,17 @@ function aiResponse(array $data,array $context): array {
     }
     return ['answer'=>$result['answer'],'links'=>array_values($links)];
 }
-function aiHttp(array $payload,string $key): array {
+function aiHttp(array $payload,string $key,?callable $cancel=null): array {
     if(!function_exists('curl_init'))throw new Problem('Для AI требуется расширение cURL.',503);
     $ch=curl_init(AI_ENDPOINT); if($ch===false)throw new Problem('Не удалось начать запрос AI.',503);
-    $body='';$overflow=false;
+    $body='';$overflow=false;$retry=null;$aborted=false;
     try{
-        if(!curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode($payload,JSON_THROW_ON_ERROR),CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$key,'Content-Type: application/json','Accept: application/json'],CURLOPT_FOLLOWLOCATION=>false,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_PROXY=>'',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>35,CURLOPT_WRITEFUNCTION=>static function($ch,string $chunk)use(&$body,&$overflow):int{if(strlen($body)+strlen($chunk)>262144){$overflow=true;return 0;}$body.=$chunk;return strlen($chunk);}]))throw new Problem('Не удалось настроить защищённый запрос OpenAI.',503);
+        if(!curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode($payload,JSON_THROW_ON_ERROR),CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$key,'Content-Type: application/json','Accept: application/json'],CURLOPT_FOLLOWLOCATION=>false,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS,CURLOPT_PROXY=>'',CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,CURLOPT_CONNECTTIMEOUT=>5,CURLOPT_TIMEOUT=>35,CURLOPT_NOPROGRESS=>false,CURLOPT_XFERINFOFUNCTION=>static function()use($cancel,&$aborted):int{if($cancel&&$cancel()){$aborted=true;return 1;}return 0;},CURLOPT_HEADERFUNCTION=>static function($ch,string $line)use(&$retry):int{if(str_starts_with(strtolower($line),'retry-after:'))$retry=trim(substr($line,12));return strlen($line);},CURLOPT_WRITEFUNCTION=>static function($ch,string $chunk)use(&$body,&$overflow):int{if(strlen($body)+strlen($chunk)>262144){$overflow=true;return 0;}$body.=$chunk;return strlen($chunk);}]))throw new Problem('Не удалось настроить защищённый запрос OpenAI.',503);
         $ok=curl_exec($ch);$status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);
+        if($aborted)throw new AiProviderFailure('cancelled',409);
+        if($status===429)throw new AiProviderFailure('rate_limited',429,aiRetrySeconds($retry,time()));
+        if(curl_errno($ch)===CURLE_OPERATION_TIMEDOUT)throw new AiProviderFailure('timeout',504);
         if($overflow||$ok===false)throw new Problem('OpenAI недоступен или превышен лимит ответа.',503);
-        if($status===429)throw new Problem('OpenAI ограничил запросы. Повторите позже.',429);
         if($status!==200)throw new Problem('OpenAI отклонил запрос (HTTP '.$status.'). Проверьте конфигурацию у оператора.',503);
         try{$data=json_decode($body,true,64,JSON_THROW_ON_ERROR);}catch(\JsonException){throw new Problem('Некорректный ответ OpenAI.',503);}
         if(!is_array($data))throw new Problem('Некорректный ответ OpenAI.',503);return $data;
@@ -142,9 +144,10 @@ function aiAsk(PDO $db,array $u,int $project,string $topic,string $term,string $
     authThrottle($db,'ai.user:'.$u['id'],8); authThrottle($db,'ai.installation',40);
     $payload=aiPayload($context,$question,$context['policy']['model'],$observed);
     aiReserve($db,(int)$fresh['organization_id'],$context['policy']);
-    $data=($transport??__NAMESPACE__.'\\aiHttp')($payload,$cfg['key']);
+    $answer=aiOpsRun($db,$fresh,$project,$context['role'],'answer.'.$context['topic'],$payload,$cfg['key'],$transport,function($data)use($db,$u,$project,$topic,$term,$cfg,$recheck,$context,$observed){
     $fresh=$recheck(); if((int)$fresh['id']!==(int)$u['id']||(int)$fresh['organization_id']!==(int)$u['organization_id'])throw new Problem('Сессия или организация изменились.',403);
     $after=aiContext($db,$fresh,$project,$topic,$term,$cfg);
     if($context!==$after)throw new Problem('Доступ или данные проекта изменились во время запроса. Ответ не показан; задайте вопрос заново.',409);
-    $answer=aiResponse($data,$after)+['coverage'=>$after['coverage'],'observed'=>$observed];aiRemember($db,$fresh,$after,$answer,$after['policy']);return $answer;
+    $answer=aiResponse($data,$after)+['coverage'=>$after['coverage'],'observed'=>$observed];return $answer;});
+    $fresh=$recheck();aiDraftSameUser($u,$fresh);if(aiContext($db,$fresh,$project,$topic,$term,$cfg)!==$context)throw new Problem('Контекст изменился.',409);aiRemember($db,$fresh,$context,$answer,$context['policy']);return $answer;
 }
