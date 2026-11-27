@@ -54,7 +54,7 @@ function contractRevision(PDO $db,array $c,array $f,int $actor,int $rev): int {
 function contractCommand(PDO $db,array $user,int $p,string $key,string $act,array $form): int {
     $user=organizationUser($db,$user);requireProjectRight($db,$user,$p,'legal.write');
     $terms=['title','responsible_id','seller_signer','seller_authority','buyer_signer','buyer_authority','currency','amount','signed_on','starts_on','ends_on','notice_on','renewal_terms','document'];
-    $fields=match($act){'contract.create'=>['reference','entity_id','counterparty_id',...$terms],'contract.revise'=>['id','version',...$terms],'contract.attach'=>['id','version','document','label'],'contract.detach'=>['id','version','attachment_id'],'contract.activate'=>['id','version','reason'],'contract.obligation'=>['id','version','title','due_on','invoice_id','plan_id'],'contract.decide'=>['id','version','obligation_id','state','reason'],default=>throw new Problem('Неизвестная операция.')};
+    $fields=match($act){'contract.create'=>['reference','entity_id','counterparty_id',...$terms],'contract.revise'=>['id','version',...$terms],'contract.attach'=>['id','version','document','label'],'contract.detach'=>['id','version','attachment_id'],'contract.activate'=>['id','version','reason','seller_authority_id','buyer_authority_id','confirm_terms'],'contract.authority'=>['id','version','side','signer','basis','valid_from','valid_until'],'contract.revoke'=>['id','version','authority_id','reason'],'contract.control'=>['id','version','obligation_id'],'contract.obligation'=>['id','version','title','due_on','invoice_id','plan_id'],'contract.decide'=>['id','version','obligation_id','state','reason'],default=>throw new Problem('Неизвестная операция.')};
     $f=[];foreach($fields as $field){$v=$form[$field]??'';if(!is_string($v)&&!is_int($v))throw new Problem('Некорректная форма.');$f[$field]=(string)$v;}
     if($act==='contract.activate'||($act==='contract.obligation'&&($f['invoice_id']!==''||$f['plan_id']!=='')))orgOwner($db,$user);
     return action($db,$user,$key,$act,[$p,$f],function()use($db,$user,$p,$act,$f){
@@ -70,7 +70,13 @@ function contractCommand(PDO $db,array $user,int $p,string $key,string $act,arra
         if((int)$c['version']!==numberId($f['version']))throw new Problem('Карточка изменилась. Обновите страницу.',409);
         $r=contractLatest($db,$id);$active=contractLatest($db,$id,true);
         if(!$r)throw new Problem('Нет редакции договора.',409);
-        if($act==='contract.revise'){
+        if($act==='contract.authority'){contractAuthorityRecord($db,$u,$c,$f);}
+        elseif($act==='contract.revoke'){contractAuthorityRevoke($db,$u,$c,$f);}
+        elseif($act==='contract.control'){
+            $o=entity($db,'SELECT * FROM contract_obligations WHERE contract_id=? AND id=?',[$id,numberId($f['obligation_id'])]);
+            if($o['state']!=='open')throw new Problem('Обязательство уже закрыто.',409);
+            contractControlTask($db,$u,$c,(int)$o['revision_id'],'obligation',$o['due_on'],(int)$o['id']);
+        }elseif($act==='contract.revise'){
             contractRevision($db,$c,$f,$actor,(int)$r['revision']+1);
         }elseif(in_array($act,['contract.attach','contract.detach','contract.activate'],true)){
             if($r['activated_at']!==null)throw new Problem('Действующая редакция неизменяема. Создайте новую редакцию.',409);
@@ -90,6 +96,9 @@ function contractCommand(PDO $db,array $user,int $p,string $key,string $act,arra
                 $pdf=contractPdf($db,$p,$r['document_id'].':'.$r['document_revision'],true);
                 if(!hash_equals($r['document_hash'],$pdf['sha256']))throw new Problem('Хеш основного документа изменился.',409);contractCheckPdf($db,$pdf);
                 foreach(query($db,'SELECT * FROM contract_attachments WHERE revision_id=?',[$r['id']])->fetchAll() as $a){$pdf=contractPdf($db,$p,$a['document_id'].':'.$a['document_revision']);if(!hash_equals($a['document_hash'],$pdf['sha256']))throw new Problem('Хеш приложения изменился.',409);contractCheckPdf($db,$pdf);}
+                contractActivationEvidence($db,$u,$c,$r,$active,$f);
+                contractControlTask($db,$u,$c,(int)$r['id'],'notice',$r['notice_on']);
+                contractControlTask($db,$u,$c,(int)$r['id'],'expiry',$r['ends_on']);
                 query($db,'UPDATE contract_revisions SET activated_by=?,activated_at=?,activation_note=? WHERE id=?',[$actor,time(),word($f['reason'],500,'Основание вступления в силу'),$r['id']]);
             }
         }elseif($act==='contract.obligation'){
@@ -99,7 +108,8 @@ function contractCommand(PDO $db,array $user,int $p,string $key,string $act,arra
             if($invoice||$plan)orgOwner($db,$u);
             if($invoice){$i=entity($db,'SELECT * FROM invoices WHERE project_id=? AND id=?',[$p,$invoice]);if((int)$i['entity_id']!==(int)$c['entity_id']||(int)$i['counterparty_id']!==(int)$c['counterparty_id']||$i['currency']!==$active['currency']||$i['state']!=='issued')throw new Problem('Счёт должен быть выставлен по тем же сторонам и валюте.',409);if(query($db,'SELECT 1 FROM contract_obligations WHERE invoice_id=?',[$invoice])->fetchColumn())throw new Problem('Счёт уже связан с обязательством.',409);}
             if($plan){$i=econPlan($db,$p,$plan);if($i['currency']!==$active['currency']||(int)$i['cancelled'])throw new Problem('План отменён или имеет другую валюту.',409);if(query($db,'SELECT 1 FROM contract_obligations WHERE plan_id=?',[$plan])->fetchColumn())throw new Problem('План уже связан с обязательством.',409);}
-            query($db,'INSERT INTO contract_obligations(project_id,contract_id,revision_id,title,due_on,invoice_id,plan_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',[$p,$id,$active['id'],word($f['title'],180,'Обязательство'),calendarDate($f['due_on']),$invoice,$plan,$actor,time()]);
+            $oid=insertId($db,'INSERT INTO contract_obligations(project_id,contract_id,revision_id,title,due_on,invoice_id,plan_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',[$p,$id,$active['id'],word($f['title'],180,'Обязательство'),calendarDate($f['due_on']),$invoice,$plan,$actor,time()]);
+            contractControlTask($db,$u,$c,(int)$active['id'],'obligation',calendarDate($f['due_on']),$oid);
         }else{
             $oid=numberId($f['obligation_id']);$o=entity($db,'SELECT * FROM contract_obligations WHERE contract_id=? AND id=?',[$id,$oid]);
             if($o['state']!=='open')throw new Problem('Обязательство уже закрыто.',409);
@@ -124,8 +134,11 @@ function contractPage(PDO $db,array $u,?int $p,?int $id,?int $before=null): arra
     $rows=query($db,"SELECT c.*,p.title project_title FROM contracts c JOIN projects p ON p.id=c.project_id WHERE $where ORDER BY c.id DESC LIMIT 51",$params)->fetchAll();
     $nextBefore=count($rows)>50?(int)$rows[49]['id']:null;$rows=array_slice($rows,0,50);$today=gmdate('Y-m-d');
     foreach($rows as &$row){$row['active']=contractLatest($db,(int)$row['id'],true);$row['latest']=contractLatest($db,(int)$row['id']);}unset($row);
-    $card=null;$revisions=[];$obligations=[];$pdfs=[];$mainPdfs=[];$members=[];$sellers=[];$buyers=[];$writable=false;$finance=false;$owner=$u['role']==='owner';$invoiceOptions=[];$planOptions=[];$latest=null;$active=null;
+    $card=null;$revisions=[];$obligations=[];$pdfs=[];$mainPdfs=[];$members=[];$sellers=[];$buyers=[];$writable=false;$finance=false;$owner=$u['role']==='owner';$invoiceOptions=[];$planOptions=[];$latest=null;$active=null;$authorities=[];$controls=[];$activationEvidence=[];$canWork=$p!==null&&roleAllows(projectRole($db,$u,$p),'work');
     if($id!==null){if($p===null)throw new Problem('Выберите проект.');$card=contractGet($db,$u,$p,$id);$latest=contractLatest($db,$id);$active=contractLatest($db,$id,true);
+        $authorities=query($db,'SELECT * FROM contract_authorities WHERE contract_id=? ORDER BY id DESC',[$id])->fetchAll();
+        $controls=query($db,'SELECT c.*,t.state task_state,t.due_on task_due FROM contract_controls c JOIN tasks t ON t.id=c.task_id WHERE c.contract_id=? ORDER BY c.due_on,c.task_id',[$id])->fetchAll();
+        $activationEvidence=array_column(query($db,'SELECT * FROM contract_activation_evidence WHERE contract_id=?',[$id])->fetchAll(),null,'revision_id');
         $revisions=query($db,'SELECT r.*,u.name responsible_name FROM contract_revisions r JOIN users u ON u.id=r.responsible_id WHERE r.contract_id=? ORDER BY r.revision DESC',[$id])->fetchAll();
         foreach($revisions as &$r){$r['attachments']=query($db,'SELECT a.*,d.title FROM contract_attachments a JOIN documents d ON d.id=a.document_id WHERE a.revision_id=? ORDER BY a.id',[$r['id']])->fetchAll();$r['responsible_valid']=contractResponsible($db,(int)$u['organization_id'],$p,(int)$r['responsible_id']);}unset($r);
         $finance=roleAllows(projectRole($db,$u,$p),'finance');$obligations=query($db,'SELECT * FROM contract_obligations WHERE contract_id=? ORDER BY due_on,id',[$id])->fetchAll();
@@ -138,5 +151,5 @@ function contractPage(PDO $db,array $u,?int $p,?int $id,?int $before=null): arra
         foreach(query($db,'SELECT u.id,u.name FROM users u JOIN organization_members m ON m.user_id=u.id WHERE m.organization_id=? AND u.enabled=1 ORDER BY u.name,u.id',[$u['organization_id']])->fetchAll() as $m)if(contractResponsible($db,(int)$u['organization_id'],$p,(int)$m['id']))$members[$m['id']]=$m['name'];
         $sellers=array_column(query($db,'SELECT id,name FROM legal_entities WHERE organization_id=? ORDER BY name,id',[$u['organization_id']])->fetchAll(),'name','id');$buyers=array_column(query($db,'SELECT id,name FROM counterparties WHERE organization_id=? ORDER BY name,id',[$u['organization_id']])->fetchAll(),'name','id');
     }}
-    return compact('projects','p','rows','nextBefore','today','card','revisions','obligations','pdfs','mainPdfs','members','sellers','buyers','writable','finance','owner','invoiceOptions','planOptions','latest','active');
+    return compact('projects','p','rows','nextBefore','today','card','revisions','obligations','pdfs','mainPdfs','members','sellers','buyers','writable','finance','owner','invoiceOptions','planOptions','latest','active','authorities','controls','activationEvidence','canWork');
 }

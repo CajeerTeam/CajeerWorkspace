@@ -7,6 +7,7 @@ $manage=roleAllows($projectRole,'manage') && $t['milestone_state']!=='closed'; ?
 <p><strong><?= h(PRIORITIES[$t['priority']]) ?></strong> · <?= h(STATES[$t['state']]) ?> · <?= h($t['assignee']??'Не назначен') ?> · срок <?= h(displayDate($t['due_on'])) ?></p>
 <p>Веха: <?= h($t['milestone_title']??'Не назначена') ?><?= $t['milestone_state']==='closed'?' · Закрыта':'' ?></p>
 <?php if ($blocked): ?><p class="planning-warning">Задача заблокирована незавершёнными предшественниками.</p><?php endif ?>
+<?php if(!empty($contractControl)): ?><p class="notice">Контрольный срок: <?= h($contractControl['due_on']) ?><?= !(int)$contractControl['current_control']?' · исторический, уточните у юридического ответственного':'' ?><?= $contractControl['due_on']!==$t['due_on']?' · рабочий срок отличается':'' ?>. Закрытие задачи не заменяет юридическое решение. <?php if(isset($contractControl['contract_id'])): ?><a href="<?= h(url('contracts',['project'=>$pid,'id'=>$contractControl['contract_id']])) ?>">Карточка договора</a><?php endif ?></p><?php endif ?>
 <h3>Заказчик результата</h3><p><?= h($t['result_customer']?:'Не указан — заполните план задачи.') ?></p>
 <h3>Критерии приёмки</h3><p class="criteria-text"><?= h($t['acceptance_criteria']?:'Не указаны — заполните перед завершением.') ?></p>
 <?php require ROOT.'/views/task_state.php'; ?></section>

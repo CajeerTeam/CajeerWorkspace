@@ -312,7 +312,7 @@ function handlePost(PDO $db, ?array $user): never {
             if($act==='sign.cancel')signCancel($db,$user,$pid,$id);else { $cfg=signConfig(); if($cfg['org']!==(int)$user['organization_id'])throw new Problem('Провайдер не подключён.',403); $result=signProcess($db,$id,$cfg,$act==='sign.adopt'?'adopt':'sync',$act==='sign.adopt'?signId($_POST['remote_id']??null):null);$_SESSION['notice']=SIGN_STATES[$result]; }go('signing',['project'=>$pid,'id'=>$id]);
         case 'prep.template': case 'prep.create': case 'prep.revise': case 'prep.assign': case 'prep.submit': case 'prep.legal': case 'prep.approve': case 'prep.return': case 'prep.cancel':
             $pid=$projectId();$id=prepCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Операция сохранена.';go('preparation',$act==='prep.template'?['project'=>$pid]:['project'=>$pid,'id'=>$id]);
-        case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
+        case 'contract.authority': case 'contract.revoke': case 'contract.control': case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
             $pid=$projectId();$cid=contractCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Карточка договора сохранена.';go('contracts',['project'=>$pid,'id'=>$cid]);
         case 'freelance.package': case 'freelance.offer': case 'freelance.bill': case 'freelance.stop': case 'freelance.discard':
             $oid=freelanceCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Условия или счёт сохранены.'; go('clients',$act==='freelance.package'?[]:['id'=>$oid]);
@@ -691,6 +691,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $t=planningTask($db,$user,numberId($_GET['id']??0)); $pid=(int)$t['project_id'];
             $data=['task'=>$t,'projectRole'=>projectRole($db,$user,$pid),'dependencies'=>planningDependencies($db,$user,(int)$t['id']),'blocked'=>blockedTask($db,$pid,(int)$t['id'])];
             $data['github']=ghTaskData($db,$user,$pid,(int)$t['id']);
+            $data['contractControl']=query($db,"SELECT c.kind,c.due_on,c.contract_id,CASE WHEN c.kind='obligation' THEN CASE WHEN o.state='open' THEN 1 ELSE 0 END ELSE CASE WHEN c.revision_id=(SELECT r.id FROM contract_revisions r WHERE r.contract_id=c.contract_id AND r.activated_at IS NOT NULL ORDER BY r.revision DESC LIMIT 1) THEN 1 ELSE 0 END END current_control FROM contract_controls c LEFT JOIN contract_obligations o ON o.id=c.obligation_id WHERE c.project_id=? AND c.task_id=?",[$pid,$t['id']])->fetch()?:null;
+            if($data['contractControl']&&!roleAllows($data['projectRole'],'legal'))unset($data['contractControl']['contract_id']);
             $data['taskReleases']=roleAllows($data['projectRole'],'connections')?query($db,'SELECT r.id,r.tag,r.state FROM project_release_tasks rt JOIN project_releases r ON r.id=rt.release_id AND r.project_id=rt.project_id WHERE rt.project_id=? AND rt.task_id=? ORDER BY r.id DESC LIMIT 100',[$pid,$t['id']])->fetchAll():[];
             $data['ossConfig']=query($db,'SELECT upstream FROM oss_projects WHERE project_id=?',[$pid])->fetch()?:null;
             $data['ossLink']=query($db,'SELECT upstream_url FROM oss_task_links WHERE project_id=? AND task_id=?',[$pid,$t['id']])->fetchColumn()?:null;

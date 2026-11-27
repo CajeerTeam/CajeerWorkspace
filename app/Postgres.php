@@ -35,7 +35,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -61,7 +61,7 @@ const TRANSFER_TABLES = [
     'bank_accounts'=>'id','bank_rates'=>'id','bank_statements'=>'id','bank_rows'=>'id','bank_allocations'=>'id','bank_reconciliations'=>'id','bank_match_history'=>'id','bank_formats'=>'id','bank_import_sources'=>'statement_id','bank_discrepancy_reviews'=>'id',
     'economics_settings'=>'project_id','economics_budgets'=>'id','portfolio_budget_versions'=>'budget_id,version','portfolio_decisions'=>'project_id,version','economics_labor_rates'=>'id','economics_cash_classes'=>'cash_id','economics_plans'=>'id','economics_plan_cash'=>'plan_id,cash_id',
     'uk_vat_profiles'=>'entity_id','uk_vat_documents'=>'invoice_id',
-    'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id',
+    'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id','contract_authorities'=>'id','contract_activation_evidence'=>'revision_id','contract_controls'=>'task_id',
     'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id','retention_policies'=>'id','retention_documents'=>'document_id','retention_holds'=>'id','retention_links'=>'id','retention_deliveries'=>'id','engine_sites'=>'id','engine_publications'=>'id','book_sources'=>'id','book_editions'=>'id','book_reviews'=>'id','book_release_links'=>'id','forum_sources'=>'id','forum_topics'=>'id','forum_operations'=>'id','lite_sites'=>'id','lite_jobs'=>'id','editorial_releases'=>'id','editorial_events'=>'id','logs_bindings'=>'project_id','logs_outbox'=>'id','bots_bindings'=>'project_id','bots_messages'=>'id','bots_events'=>'id','incident_policies'=>'project_id','incidents'=>'id','incident_signals'=>'id','incident_events'=>'id','ops_services'=>'id','ops_service_incidents'=>'service_id,incident_id','ops_support'=>'id','ops_followups'=>'incident_id,task_id','reminder_subscriptions'=>'id','reminder_reads'=>'id','integration_rates'=>'provider','integration_jobs'=>'id','integration_failures'=>'id','integration_journal'=>'id'
 ];
 function transferRows(PDO $db,string $table,string $order): iterable {
