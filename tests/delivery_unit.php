@@ -1,0 +1,25 @@
+<?php
+declare(strict_types=1);
+namespace Workspace;
+require __DIR__.'/project_release_unit.php';
+$gh_checks=0;
+gcheck(deliveryPrs(' 8, 9 8 ')===[8,9],'dedup sorted PRs');
+gcheck(deliveryPrs('')===[],'optional PRs');
+foreach(['0','-1','1/2','1 2 3 4 5 6','0002',[]] as $bad)gdeny(fn()=>deliveryPrs($bad),422,'bad PR list');
+gdeny(fn()=>deliveryInput(array_fill(1,20,'1 2'),range(1,20)),422,'bounded total');
+$f=new ReleaseFixture();$r=['id'=>1,'commit_sha'=>$f->sha,'tag'=>'v1','changelog'=>"Notes\nSecond",'artifact_name'=>'app.zip','artifact_sha256'=>$f->digest,'required_checks'=>'["Build"]','evidence_hash'=>str_repeat('f',64)];
+$scope=['task_id'=>1,'task_version'=>2,'link_version'=>1,'pr_number'=>7,'extra_prs'=>'[8]','criteria'=>'QA: <script>','title'=>'Task'];$tasks=[$scope,array_replace($scope,['pr_number'=>8])];
+$read=function(string $path)use($f){if($path==='/pulls/8')return array_replace($f->read('/pulls/7'),['number'=>8,'head'=>['sha'=>str_repeat('1',40)]]);return $f->read($path);};
+$e=releaseRemote($read,$r,$tasks,40);gcheck(count($e['tasks'])===2&&deliveryEvidenceMatches($r,$scope,$e),'two PRs same task');
+$bad=$e;array_pop($bad['tasks']);gcheck(!deliveryEvidenceMatches($r,$scope,$bad),'missing PR');
+$bad=$e;$bad['tasks'][0]['criteria']='other';gcheck(!deliveryEvidenceMatches($r,$scope,$bad),'criteria changed');
+$bad=$e;$bad['ref']['commit_sha']=$f->merge;gcheck(!deliveryEvidenceMatches($r,$scope,$bad),'wrong SHA');
+gdeny(fn()=>releaseRemote(function($path)use($read){$v=$read($path);if($path==='/pulls/8')$v['merged']=false;return $v;},$r,$tasks,40),409,'unmerged second PR');
+gdeny(fn()=>releaseRemote(function($path)use($read){$v=$read($path);if($path==='/pulls/8')$v['base']['repo']['id']=41;return $v;},$r,$tasks,40),409,'foreign second PR');
+$f->wrongCheckSha=true;gdeny(fn()=>releaseRemote($read,$r,$tasks,40),409,'late CI on another SHA');$f->wrongCheckSha=false;
+$identity=['site_id'=>1,'project_id'=>1];$d=['id'=>5,'state'=>'succeeded','release_id'=>1,'finished_at'=>100,'release_hash'=>$r['evidence_hash'],'target_snapshot'=>json_encode($identity),'result'=>json_encode(['state'=>'succeeded','after'=>$f->sha,'after_digest'=>$f->digest])];
+gcheck(deliveryObserved($r,$d,$identity),'actual observation');
+foreach(['state'=>'rolled_back','release_id'=>2,'release_hash'=>'wrong','result'=>json_encode(['state'=>'succeeded','after'=>$f->sha]),'target_snapshot'=>'{}','finished_at'=>null] as $k=>$v)gcheck(!deliveryObserved($r,array_replace($d,[$k=>$v]),$identity),'reject '.$k);
+gcheck(deliveryFingerprint($r,$scope,$d,null)!==deliveryFingerprint($r,$scope,$d,['id'=>7]),'stale QA form');
+gcheck(sensitiveAction('release.qa'),'MFA');
+echo "OK · $gh_checks delivery checks\n";

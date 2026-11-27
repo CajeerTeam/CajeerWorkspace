@@ -35,10 +35,10 @@ function releaseResponsible(PDO $db,array $u,int $project,int $uid): void {
     releaseManager($db,['id'=>$uid,'organization_id'=>$u['organization_id']],$project);
 }
 function releaseTaskRows(PDO $db,array $r): array {
-    $rows=query($db,'SELECT rt.*,t.state,t.version current_task_version,l.version current_link_version,l.kind,l.number,l.repository_binding FROM project_release_tasks rt JOIN tasks t ON t.id=rt.task_id AND t.project_id=rt.project_id LEFT JOIN github_task_links l ON l.task_id=rt.task_id AND l.project_id=rt.project_id WHERE rt.release_id=? ORDER BY rt.task_id',[$r['id']])->fetchAll();
+    $rows=query($db,'SELECT rt.*,t.state,t.title current_title,t.acceptance_criteria current_criteria,t.version current_task_version,l.version current_link_version,l.kind,l.number,l.repository_binding FROM project_release_tasks rt JOIN tasks t ON t.id=rt.task_id AND t.project_id=rt.project_id LEFT JOIN github_task_links l ON l.task_id=rt.task_id AND l.project_id=rt.project_id WHERE rt.release_id=? ORDER BY rt.task_id',[$r['id']])->fetchAll();
     if(!$rows||count($rows)>RELEASE_TASK_LIMIT)throw new Problem('Нет допустимых задач выпуска.',409);
     foreach($rows as $t) if($t['state']!=='done'||(int)$t['task_version']!==(int)$t['current_task_version']||$t['kind']!=='pull'||(int)$t['link_version']!==(int)$t['current_link_version']||(int)$t['number']!==(int)$t['pr_number']||(int)$t['repository_binding']!==(int)$r['repository_binding']) throw new Problem('Задача или связь PR изменена. Отмените карточку и создайте новую.',409);
-    return $rows;
+    return deliveryExpand($db,$r,$rows);
 }
 function releaseRepo(PDO $db,array $r): array {
     return entity($db,'SELECT * FROM github_repositories WHERE id=? AND project_id=? AND generation=? AND active=1',[$r['repository_binding'],$r['project_id'],$r['repository_generation']]);
@@ -50,18 +50,18 @@ function releaseCreate(PDO $db,array $user,int $project,string $key,array $form)
     $checks=json_encode(releaseChecks($form['required_checks']??null),JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
     $responsible=numberId($form['responsible_id']??0);$ids=$form['tasks']??null;
     if(!is_array($ids)||!array_is_list($ids)||!$ids||count($ids)>RELEASE_TASK_LIMIT)throw new Problem('Выберите 1–20 задач.');
-    $ids=array_map(__NAMESPACE__.'\\numberId',$ids);$ids=array_values(array_unique($ids));sort($ids,SORT_NUMERIC);
-    return atomic($db,function()use($db,$user,$project,$key,$tag,$sha,$notes,$asset,$digest,$checks,$responsible,$ids){
+    $ids=array_map(__NAMESPACE__.'\\numberId',$ids);$ids=array_values(array_unique($ids));sort($ids,SORT_NUMERIC);$extra=deliveryInput($form['extra_prs']??[],$ids);
+    return atomic($db,function()use($db,$user,$project,$key,$tag,$sha,$notes,$asset,$digest,$checks,$responsible,$ids,$extra){
         $u=releaseManager($db,$user,$project);
         $prior=query($db,'SELECT * FROM project_releases WHERE project_id=? AND request_key=?',[$project,$key])->fetch();
         if($prior){$oldIds=array_map('intval',query($db,'SELECT task_id FROM project_release_tasks WHERE release_id=? ORDER BY task_id',[$prior['id']])->fetchAll(PDO::FETCH_COLUMN));
-            if((int)$prior['creator_id']!==(int)$u['id']||$prior['tag']!==$tag||$prior['commit_sha']!==$sha||$prior['changelog']!==$notes||$prior['artifact_name']!==$asset||$prior['artifact_sha256']!==$digest||$prior['required_checks']!==$checks||(int)$prior['responsible_id']!==$responsible||$oldIds!==$ids)throw new Problem('Ключ формы уже использован.',409);return (int)$prior['id'];}
+            if((int)$prior['creator_id']!==(int)$u['id']||$prior['tag']!==$tag||$prior['commit_sha']!==$sha||$prior['changelog']!==$notes||$prior['artifact_name']!==$asset||$prior['artifact_sha256']!==$digest||$prior['required_checks']!==$checks||(int)$prior['responsible_id']!==$responsible||$oldIds!==$ids)throw new Problem('Ключ формы уже использован.',409);foreach($ids as $tid){$saved=query($db,'SELECT extra_prs FROM delivery_task_scope WHERE release_id=? AND task_id=?',[$prior['id'],$tid])->fetchColumn();if(($saved===false?[]:json_decode($saved,true,16,JSON_THROW_ON_ERROR))!==$extra[$tid])throw new Problem('Список PR изменился.',409);}return (int)$prior['id'];}
         releaseResponsible($db,$u,$project,$responsible);
         $repo=entity($db,'SELECT * FROM github_repositories WHERE project_id=? AND active=1',[$project]);
         if(query($db,"SELECT 1 FROM project_releases WHERE project_id=? AND tag=? AND state!='cancelled'",[$project,$tag])->fetchColumn())throw new Problem('Тег уже зарегистрирован.',409);
-        $rows=[];foreach($ids as $id){$t=entity($db,"SELECT t.id,t.version task_version,l.version link_version,l.number FROM tasks t JOIN github_task_links l ON l.task_id=t.id AND l.project_id=t.project_id WHERE t.project_id=? AND t.id=? AND t.state='done' AND l.kind='pull' AND l.repository_binding=?",[$project,$id,$repo['id']]);$rows[]=$t;}
+        $rows=[];foreach($ids as $id){$t=entity($db,"SELECT t.id,t.title,t.acceptance_criteria,t.version task_version,l.version link_version,l.number FROM tasks t JOIN github_task_links l ON l.task_id=t.id AND l.project_id=t.project_id WHERE t.project_id=? AND t.id=? AND t.state='done' AND l.kind='pull' AND l.repository_binding=?",[$project,$id,$repo['id']]);$rows[]=$t;if(in_array((int)$t['number'],$extra[$id],true))throw new Problem('Не повторяйте основной PR.',422);}
         $id=insertId($db,'INSERT INTO project_releases(project_id,repository_binding,repository_generation,tag,commit_sha,changelog,artifact_name,artifact_sha256,required_checks,responsible_id,creator_id,request_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',[$project,$repo['id'],$repo['generation'],$tag,$sha,$notes,$asset,$digest,$checks,$responsible,$u['id'],$key,time()]);
-        foreach($rows as $t)query($db,'INSERT INTO project_release_tasks(release_id,project_id,task_id,task_version,link_version,pr_number) VALUES(?,?,?,?,?,?)',[$id,$project,$t['id'],$t['task_version'],$t['link_version'],$t['number']]);
+        foreach($rows as $t){query($db,'INSERT INTO project_release_tasks(release_id,project_id,task_id,task_version,link_version,pr_number) VALUES(?,?,?,?,?,?)',[$id,$project,$t['id'],$t['task_version'],$t['link_version'],$t['number']]);query($db,'INSERT INTO delivery_task_scope(release_id,task_id,project_id,title,criteria,extra_prs) VALUES(?,?,?,?,?,?)',[$id,$t['id'],$project,$t['title'],$t['acceptance_criteria'],json_encode($extra[$t['id']],JSON_THROW_ON_ERROR)]);}
         auditEvent($db,$u,$project,'release.create',$id);return $id;
     });
 }
@@ -110,7 +110,7 @@ function releaseRemote(callable $read,array $r,array $tasks,int $repository,?str
             if($merge!==$sha){$compare=$read('/compare/'.$merge.'...'.$sha.'?per_page=1');if(!in_array($compare['status']??null,['ahead','identical'],true)||($compare['merge_base_commit']['sha']??null)!==$merge||($compare['base_commit']['sha']??null)!==$merge)throw new Problem('Merge commit PR не входит в SHA выпуска.',409);}
             $prs[$n]=['number'=>$n,'head_sha'=>$head,'merge_sha'=>$merge];
         }
-        $taskEvidence[]=['task_id'=>(int)$t['task_id'],'task_version'=>(int)$t['task_version'],'link_version'=>(int)$t['link_version'],'pr'=>$prs[$n]];
+        $taskEvidence[]=['task_id'=>(int)$t['task_id'],'task_version'=>(int)$t['task_version'],'link_version'=>(int)$t['link_version'],'pr'=>$prs[$n]];if(isset($t['criteria'])){$taskEvidence[array_key_last($taskEvidence)]['criteria']=$t['criteria'];$taskEvidence[array_key_last($taskEvidence)]['title']=$t['title'];}
     }
     $phase='ci';$ci=releaseCI($read,$sha,json_decode($r['required_checks'],true,32,JSON_THROW_ON_ERROR));$phase='release';
     $remote=$read('/releases/tags/'.rawurlencode($tag));$rid=ghId($remote['id']??null);
@@ -179,7 +179,7 @@ function releasePage(PDO $db,array $user,int $project,?int $id): array {
         $eligible=query($db,"SELECT t.id,t.title,l.number FROM tasks t JOIN github_task_links l ON l.task_id=t.id AND l.project_id=t.project_id WHERE t.project_id=? AND t.state='done' AND l.kind='pull' AND l.repository_binding=? ORDER BY t.id LIMIT 100",[$project,$repo['id']])->fetchAll();
         foreach(query($db,"SELECT u.id,u.name FROM users u JOIN organization_members m ON m.user_id=u.id WHERE m.organization_id=? AND u.enabled=1 AND (m.role='owner' OR EXISTS(SELECT 1 FROM project_members pm WHERE pm.project_id=? AND pm.user_id=u.id)) ORDER BY u.name,u.id",[$u['organization_id'],$project])->fetchAll() as $person){try{releaseResponsible($db,$u,$project,(int)$person['id']);$responsibles[]=$person;}catch(Problem){}}
     }
-    return ['project'=>$p,'repository'=>$repo,'releases'=>$rows,'release'=>$r,'releaseTasks'=>$tasks,'eligible'=>$eligible,'responsibles'=>$responsibles,'releaseManage'=>$manage,'evidence'=>$evidence,'bookLinks'=>$r?bookReleaseLinks($db,$u,$project,(int)$r['id']):[]];
+    return ['project'=>$p,'repository'=>$repo,'releases'=>$rows,'release'=>$r,'releaseTasks'=>$tasks,'eligible'=>$eligible,'responsibles'=>$responsibles,'releaseManage'=>$manage,'deliveryRead'=>roleAllows(projectRole($db,$u,$project),'work'),'evidence'=>$evidence,'bookLinks'=>$r?bookReleaseLinks($db,$u,$project,(int)$r['id']):[]];
 }
 
 // Read-only bounded projection for the assistant. Same project/connection rights as releasePage.

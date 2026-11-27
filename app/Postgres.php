@@ -35,7 +35,7 @@ function migratePostgres(PDO $db,bool $install): void {
         $v=schemaVersion($db);
         if ($v===SCHEMA_VERSION) { validateLedger($db,$v,migrationFiles($db)); return; }
         if ($v===0 && $install) { installPostgres($db); return; }
-        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
+        if ($install || !in_array($v,[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38],true)) throw new Problem('Неподдерживаемая исходная схема PostgreSQL.',503);
         $files=migrationFiles($db); validateLedger($db,$v,$files);
         // Operator must take a verified pg_dump before calling upgrade. Transactional DDL rolls back on error.
         for ($i=$v+1;$i<=SCHEMA_VERSION;$i++) { $db->exec($files[$i]['sql']); recordMigration($db,$i,$files,'applied'); }
@@ -55,7 +55,7 @@ const TRANSFER_TABLES = [
     'counterparties'=>'id','counterparty_contacts'=>'id','client_orders'=>'id','client_offers'=>'id','client_stages'=>'id','client_stage_tasks'=>'stage_id,task_id','client_order_guests'=>'guest_id','client_deliveries'=>'id','client_stage_hours'=>'delivery_id,entry_id',
     'oss_projects'=>'project_id','oss_milestones'=>'project_id,milestone_id','oss_contributors'=>'id','oss_task_links'=>'task_id','oss_contributions'=>'id','oss_comments'=>'id','oss_releases'=>'id','oss_release_items'=>'release_id,contribution_id','oss_requests'=>'contributor_id,request_key',
     'github_repositories'=>'id','github_task_links'=>'task_id','github_deliveries'=>'delivery_id','github_jobs'=>'id','project_releases'=>'id','project_release_tasks'=>'release_id,task_id',
-    'infra_hosts'=>'id','infra_environments'=>'id','infra_sites'=>'id','infra_observations'=>'host_id,source','infra_operation_owners'=>'host_id,operation','deployments'=>'id',
+    'infra_hosts'=>'id','infra_environments'=>'id','infra_sites'=>'id','infra_observations'=>'host_id,source','infra_operation_owners'=>'host_id,operation','deployments'=>'id','delivery_task_scope'=>'release_id,task_id','delivery_reviews'=>'id',
     'legal_entities'=>'id','invoices'=>'id','invoice_lines'=>'id','invoice_movements'=>'id',
     'accounting_accounts'=>'id','accounting_periods'=>'id','accounting_openings'=>'id','accounting_entries'=>'id',
     'bank_accounts'=>'id','bank_rates'=>'id','bank_statements'=>'id','bank_rows'=>'id','bank_allocations'=>'id','bank_reconciliations'=>'id','bank_match_history'=>'id',

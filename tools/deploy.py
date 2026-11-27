@@ -211,6 +211,9 @@ def execute(config, job, recover=False):
                 if outcome['state'] in ('succeeded','rolled_back'):
                     expected = journal['after'] if outcome['state']=='succeeded' else journal['before']
                     require(current(root)==expected and healthy(url,expected['commit']), 'Recorded outcome no longer matches a healthy target')
+                if outcome['state']=='succeeded':
+                    # Older durable journals can be recovered only after current marker and health were rechecked.
+                    return dict(outcome,after_digest=journal['after']['digest'])
                 return outcome
             return rollback(root,url,path,journal)
         if recover:
@@ -229,8 +232,8 @@ def execute(config, job, recover=False):
             return terminal(path,journal,result('failed',message+'; current unchanged',old['commit'],old['commit']))
         try:
             switch(root,new['digest'])
-            if healthy(url,new['commit']):
-                return terminal(path,journal,result('succeeded','Artifact activated and readiness confirmed',old['commit'],new['commit']))
+            if healthy(url,new['commit']) and current(root)==new:
+                return terminal(path,journal,dict(result('succeeded','Artifact activated and readiness confirmed',old['commit'],new['commit']),after_digest=new['digest']))
         except Exception:
             pass
         return rollback(root,url,path,journal)

@@ -87,7 +87,8 @@ function deploymentRun(PDO $db,int $id,bool $recover=false,?callable $executor=n
     if(isset($job['terminal']))return $job['terminal'];
     try{$result=$executor!==null?$executor($job,$recover):deploymentExecute($config,$job,$recover);if(!is_array($result)||!in_array($result['state']??null,['succeeded','rolled_back','failed','recovery_required'],true))throw new \RuntimeException('Invalid result');
         // Only structured safe fields enter application logs.
-        $result=array_intersect_key($result,array_flip(['state','message','before','after']));foreach($result as $k=>$v)if(!is_string($v)||strlen($v)>500)throw new \RuntimeException('Invalid result');
+        $result=array_intersect_key($result,array_flip(['state','message','before','after','after_digest']));foreach($result as $k=>$v)if(!is_string($v)||strlen($v)>500)throw new \RuntimeException('Invalid result');
+        if($result['state']==='succeeded'&&(($result['after']??null)!==$job['commit']||($result['after_digest']??null)!==$job['digest']))throw new \RuntimeException('Deployment identity not confirmed');
     }catch(\Throwable){$result=['state'=>'recovery_required','message'=>'Исполнитель не подтвердил итог. Проверьте локальный журнал и выполните recover.'];}
     atomic($db,function()use($db,$id,$attempt,$result){$d=entity($db,'SELECT * FROM deployments WHERE id=?',[$id]);if($d['state']!=='running'||$d['attempt']!==$attempt)throw new Problem('Попытка уже заменена восстановлением.',409);$p=entity($db,'SELECT organization_id FROM projects WHERE id=?',[$d['project_id']]);query($db,'UPDATE deployments SET state=?,finished_at=?,result=? WHERE id=?',[$result['state'],time(),json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$id]);auditEvent($db,['id'=>$d['actor_id'],'organization_id'=>$p['organization_id']],(int)$d['project_id'],'deploy.'.$result['state'],$id);});
     return $result;

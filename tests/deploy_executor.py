@@ -34,11 +34,11 @@ class ExecutorTests(unittest.TestCase):
     def job(self,commit='b'*40,name='index.php'):
         return dict(self.artifact(commit,name),key='1'*64,target=self.identity,deadline=int(time.time())+60)
     def test_success_and_replay(self):
-        job=self.job();r=d.execute(self.cfg,job);self.assertEqual(r['state'],'succeeded');self.assertEqual(d.current(self.root)['commit'],job['commit']);self.assertEqual(d.execute(self.cfg,job),r);self.assertTrue((self.root/'releases'/self.old['digest']).is_dir())
+        job=self.job();r=d.execute(self.cfg,job);self.assertEqual(r['state'],'succeeded');self.assertEqual(r['after_digest'],job['digest']);self.assertEqual(d.current(self.root)['commit'],job['commit']);self.assertEqual(d.execute(self.cfg,job),r);self.assertTrue((self.root/'releases'/self.old['digest']).is_dir())
     def test_php_executor_bridge(self):
         job=self.job();root=Path(__file__).resolve().parents[1];code="require 'app/bootstrap.php'; echo json_encode(Workspace\\deploymentExecute($argv[1],json_decode(stream_get_contents(STDIN),true),false));"
         proc=subprocess.run(['php','-r',code,str(self.cfg)],cwd=root,input=json.dumps(job),text=True,capture_output=True,check=True,env={**os.environ,'WORKSPACE_DEPLOY_PYTHON':__import__('sys').executable})
-        self.assertEqual(json.loads(proc.stdout)['state'],'succeeded');self.assertEqual(d.current(self.root)['commit'],job['commit'])
+        self.assertEqual(json.loads(proc.stdout)['state'],'succeeded');self.assertEqual(json.loads(proc.stdout)['after_digest'],job['digest']);self.assertEqual(d.current(self.root)['commit'],job['commit'])
     def test_tampered_staging(self):
         job=self.job();d.stage(self.root,self.spool,job['digest'],job['commit'],job['size']);(self.root/'releases'/job['digest']/'index.php').write_text('tampered');r=d.execute(self.cfg,job);self.assertEqual(r['state'],'failed');self.assertEqual(d.current(self.root)['commit'],self.old['commit'])
     def test_failed_health_rollback(self):

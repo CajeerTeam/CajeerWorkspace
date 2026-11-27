@@ -36,7 +36,7 @@ class ProductionTests(unittest.TestCase):
     def setUp(self):
         self.tmp2=tempfile.TemporaryDirectory(dir=self.base);self.addCleanup(self.tmp2.cleanup);self.root=Path(self.tmp2.name);self.evidence=self.root/'evidence';self.evidence.mkdir(mode=0o700)
         now=dt.datetime.now(dt.timezone.utc).isoformat();m=self.matrix
-        t={'version':prod.VERSION,'schema':38,'topology_ready':True,'guest_ready':True,'issues':[],'projects':{'internal':1,'client':2,'oss':3},'staff':{str(i):i for i in range(8)},'teams':{'a':1,'b':2},'guest_active_ids':[1],'checked_at':now}
+        t={'version':prod.VERSION,'schema':39,'topology_ready':True,'guest_ready':True,'issues':[],'projects':{'internal':1,'client':2,'oss':3},'staff':{str(i):i for i in range(8)},'teams':{'a':1,'b':2},'guest_active_ids':[1],'checked_at':now}
         p={'version':prod.VERSION,'mode':'live_readiness','ready':True,'connections':{}}
         v={'version':prod.VERSION,'archive_sha256':recovery.digest(self.archive),'previous_sha256':self.prev,'checked_at':now,'stand':'Synthetic test fixture','tax_profile':'management_cash_only','signature_provider':'dropbox_sign_v3','backend':'sqlite','php_version':'8.4.24','database_version':'3.40.1','owners':{name:'Test operator '+name for name in ('workspace','release','security','database','finance','legal',*m['integrations'])},'integrations':{},'scenarios':{k:{'passed':True,'evidence_ref':'synthetic scenario'} for k in prod.SCENARIOS},'checks':{k:{'passed':True,'evidence_ref':'synthetic check'} for k in prod.CHECKS},'ci':{'run':'synthetic-run','commit':'b'*40,'jobs':{k:'success' for k in prod.CI}},'thresholds':{'minimum_requests':100,'minimum_concurrency':5,'p95_ms':100,'error_rate':0,'rto_seconds':60,'rpo_seconds':300},'open_critical_defects':0}
         for k,s in m['integrations'].items():
@@ -126,7 +126,7 @@ class ProductionTests(unittest.TestCase):
                 return
             result=publisher.publish(*args,channel='preview' if mode=='preview' else 'stable');self.assertEqual(result['status'],'published')
             self.assertEqual(set(uploaded),{prod.NAME,prod.NAME+'.sig',publisher.META,publisher.SIG})
-            m=json.loads(uploaded[publisher.META]);self.assertEqual(m['channel'],'preview' if mode=='preview' else 'stable');self.assertEqual(m['commit'],commit);self.assertEqual(m['schema'],38)
+            m=json.loads(uploaded[publisher.META]);self.assertEqual(m['channel'],'preview' if mode=='preview' else 'stable');self.assertEqual(m['commit'],commit);self.assertEqual(m['schema'],39)
             self.assertEqual(m['supported_from'][0]['version'],prod.PREVIOUS)
             self.assertEqual(m['acceptance_sha256'],recovery.digest(bundle/'acceptance.json'))
             self.assertEqual(m['package']['sha256'],recovery.sha(uploaded[prod.NAME]))
