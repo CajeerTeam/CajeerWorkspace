@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.6.2 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.6.3 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -72,14 +72,12 @@ class CandidateTests(unittest.TestCase):
         subprocess.run(['php',str(ROOT/'bin/workspace'),'init','candidate@example.test','Candidate owner'],input=b'Candidate-test-only-123!\n',env=env,check=True,capture_output=True)
         candidate.smoke(ROOT,candidate.NEW,env,upgrade=True)
 
-    def test_additive_postgres_sequence(self):
+    def test_unchanged_postgres_sequence(self):
         import copy
         before={'schema':candidate.OLD_SCHEMA,'cash':[],'ledger':[],'objects':[],'sequences':{'old_id_seq':{'last_value':3,'is_called':True}},'tables':{'schema_migrations':{'rows':candidate.OLD_SCHEMA},'old':{'rows':2,'sha256':'a'*64}}}
-        after=copy.deepcopy(before);after['schema']=candidate.SCHEMA;after['tables']['schema_migrations']['rows']=candidate.SCHEMA
-        for name in ('uk_exchange_batches','uk_exchange_receipts','uk_document_rules'):after['tables'][name]={'rows':0,'sha256':'b'*64}
-        after['sequences']['uk_exchange_batches_id_seq']={'last_value':1,'is_called':False}
+        after=copy.deepcopy(before)
         self.assertTrue(candidate.migrated_matches(before,after))
-        after['sequences']['uk_exchange_batches_id_seq']['is_called']=True
+        after['sequences']['old_id_seq']['last_value']=4
         self.assertFalse(candidate.migrated_matches(before,after))
 
     def fixture(self):
@@ -98,12 +96,10 @@ class CandidateTests(unittest.TestCase):
 
     def test_switch_and_rollback(self):
         managed,data,objects,db,backup,sha=self.fixture()
-        # Simulate only the native upgrade command with the actual new SQL.
+        # Schema 50 is unchanged; native smoke is substituted only for this offline switch rehearsal.
         def smoke(folder,version,env,upgrade=False):
-            if upgrade:
-                with closing(sqlite3.connect(db)) as c,c:
-                    if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
-                        sql=ROOT/'database/050.sql'; c.executescript(sql.read_text()); c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(50,recovery.digest(sql),'applied')); c.execute('PRAGMA user_version=50')
+            with closing(sqlite3.connect(db)) as c:
+                self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0],candidate.SCHEMA)
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=smoke):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)

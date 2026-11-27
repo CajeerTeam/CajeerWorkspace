@@ -5,7 +5,7 @@ require dirname(__DIR__).'/app/bootstrap.php';
 $n=0;
 function uc(bool $ok,string $why): void {global $n;if(!$ok)throw new \RuntimeException($why);++$n;}
 function reject(callable $fn): void {try{$fn();}catch(\Throwable){uc(true,'rejected');return;}uc(false,'expected rejection');}
-$key=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_RSA,'private_key_bits'=>2048]);$pem=openssl_pkey_get_details($key)['key'];$pin=hash('sha256',$pem);$commit=str_repeat('a',40);$v='1.6.4';$tag='v'.$v;$name='CajeerWorkspace-'.$v.'.zip';$bytes='zip bytes';$psig='package signature';
+$key=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_RSA,'private_key_bits'=>2048]);$pem=openssl_pkey_get_details($key)['key'];$pin=hash('sha256',$pem);$commit=str_repeat('a',40);$v='1.7.1';$tag='v'.$v;$name='CajeerWorkspace-'.$v.'.zip';$bytes='zip bytes';$psig='package signature';
 $m=['format'=>1,'repository'=>UPDATE_REPO,'channel'=>'stable','version'=>$v,'tag'=>$tag,'commit'=>$commit,'schema'=>50,'supported_from'=>[['version'=>VERSION,'schema'=>50,'archive_sha256'=>str_repeat('b',64)]],'runtime'=>['php_min'=>'8.3','php_max_exclusive'=>'9.0','architecture'=>64,'sqlite_min'=>'3.27.0','postgres_min'=>'14','python_min'=>'3.9','extensions'=>['pdo','curl','session','openssl']],'package'=>['name'=>$name,'size'=>strlen($bytes),'sha256'=>hash('sha256',$bytes),'signature_sha256'=>hash('sha256',$psig)],'matrix_sha256'=>str_repeat('c',64),'acceptance_sha256'=>str_repeat('d',64),'release_key_sha256'=>$pin,'accepted_at'=>'2026-01-01T00:00:00+00:00'];
 $sign=static function(array $m)use($key):array{$raw=updateCanonical($m);openssl_sign($raw,$sig,$key,OPENSSL_ALGO_SHA256);return [$raw,$sig];};
 [$raw,$sig]=$sign($m);uc(updateManifest($raw,$sig,$pem,$pin,$v,$commit)==$m,'signed metadata');

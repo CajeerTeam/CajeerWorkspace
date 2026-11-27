@@ -25,20 +25,24 @@ function opsAssociate(PDO $db,int $p,array $s,int $incident,?int $deployment=nul
 // Authoritative managed deployment records are processed before remote logs. One incident per job.
 function opsDeploymentSignals(PDO $db,array $u,array $policy,?int $onlyJob=null): array {
     $p=(int)$policy['project_id'];$ids=[];
-    $rows=query($db,"SELECT d.*,o.id AS service_id FROM deployments d JOIN ops_services o ON o.project_id=d.project_id AND o.site_id=d.site_id WHERE d.project_id=? AND d.state IN ('failed','recovery_required') AND d.started_at IS NOT NULL AND d.finished_at>=o.created_at ".($onlyJob!==null?' AND d.id=?':' AND NOT EXISTS(SELECT 1 FROM ops_service_incidents l WHERE l.deployment_id=d.id)')." ORDER BY d.id LIMIT 100",$onlyJob===null?[$p]:[$p,$onlyJob])->fetchAll();
-    foreach($rows as $d){$s=opsService($db,$p,(int)$d['service_id']);$job=(int)$d['id'];$t=(int)$d['finished_at'];$code='deploy.'.$d['state'];
-        // Reuse a previous Logs incident only when its job, release and environment agree.
-        $prior=query($db,"SELECT id,state,fingerprint FROM incidents WHERE project_id=? AND source='logs' AND object_id=? AND release_id=? AND environment=? AND condition_code IN ('deploy.failed','deploy.recovery_required') ORDER BY CASE WHEN id IN (SELECT incident_id FROM ops_service_incidents WHERE deployment_id=?) THEN 0 ELSE 1 END,id LIMIT 1",[$p,$job,$d['release_id'],$s['kind'],$job])->fetch();
-        if($prior){opsAssociate($db,$p,$s,(int)$prior['id'],$job);if($prior['state']==='resolved')continue;}
+    // Existing service policy keeps its original start boundary; otherwise use the on-call policy boundary.
+    $rows=query($db,"SELECT d.*,o.id AS service_id FROM deployments d LEFT JOIN ops_services o ON o.project_id=d.project_id AND o.site_id=d.site_id AND o.created_at<=d.finished_at WHERE d.project_id=? AND d.state IN ('failed','recovery_required') AND d.started_at IS NOT NULL AND (o.id IS NOT NULL OR d.finished_at>=?) ".($onlyJob!==null?' AND d.id=?':" AND NOT EXISTS(SELECT 1 FROM ops_service_incidents l WHERE l.deployment_id=d.id) AND NOT EXISTS(SELECT 1 FROM incidents i JOIN incident_signals sig ON sig.incident_id=i.id AND sig.project_id=i.project_id WHERE i.project_id=d.project_id AND i.release_id=d.release_id AND i.object_id=d.id AND i.source='logs' AND i.condition_code IN ('deploy.failed','deploy.recovery_required') AND sig.evidence LIKE '%managed_deployment_record%')")." ORDER BY d.id LIMIT 100",$onlyJob===null?[$p,$policy['updated_at']]:[$p,$policy['updated_at'],$onlyJob])->fetchAll();
+    foreach($rows as $d){$job=(int)$d['id'];$t=(int)$d['finished_at'];$code='deploy.'.$d['state'];$target=json_decode($d['target_snapshot'],true,32,JSON_THROW_ON_ERROR);
+        if(!is_array($target)||(int)($target['project_id']??0)!==$p||(int)($target['site_id']??0)!==(int)$d['site_id']||!in_array($target['kind']??null,['dev','staging','prod'],true)||!isset($target['host_id']))continue;
+        $s=$d['service_id']===null?null:opsService($db,$p,(int)$d['service_id']);
+        $prior=null;
+        $candidates=query($db,"SELECT * FROM incidents WHERE project_id=? AND source='logs' AND object_id=? AND release_id=? AND environment=? AND condition_code IN ('deploy.failed','deploy.recovery_required') ORDER BY CASE WHEN id IN (SELECT incident_id FROM ops_service_incidents WHERE deployment_id=?) THEN 0 ELSE 1 END,id LIMIT 100",[$p,$job,$d['release_id'],$target['kind'],$job])->fetchAll();
+        foreach($candidates as $candidate){$signals=query($db,'SELECT evidence FROM incident_signals WHERE project_id=? AND incident_id=? ORDER BY id DESC LIMIT 100',[$p,$candidate['id']])->fetchAll();foreach($signals as $signal){$ev=json_decode($signal['evidence'],true,16,JSON_THROW_ON_ERROR);if(is_array($ev)&&traceIncidentMatches($candidate,$d,$target,$ev)){$prior=$candidate;break 2;}}}
+        if($prior){if($s)opsAssociate($db,$p,$s,(int)$prior['id'],$job);if($prior['state']==='resolved')continue;}
         $fp=$prior?$prior['fingerprint']:incidentHash(['managed-deployment',$p,$job]);
-        $id=incidentAccept($db,$u,$policy,['source'=>'logs','fingerprint'=>$fp,'key'=>incidentHash(['managed-deployment',$p,$job,$d['attempt'],$t,$code]),'code'=>$code,'object'=>$job,'env'=>$s['kind'],'release'=>(int)$d['release_id'],'severity'=>$d['state']==='recovery_required'?'critical':'error','at'=>$t,'state'=>'bad','evidence'=>['event'=>$code,'object_id'=>$job,'release_id'=>(int)$d['release_id'],'environment'=>$s['kind'],'host_id'=>(int)$s['host_id'],'observed_at'=>$t,'method'=>'managed_deployment_record']]);
-        if($id!==null){opsAssociate($db,$p,$s,$id,$job);$ids[]=$id;}
+        $id=incidentAccept($db,$u,$policy,['source'=>'logs','fingerprint'=>$fp,'key'=>incidentHash(['managed-deployment',$p,$job,$d['attempt'],$t,$code]),'code'=>$code,'object'=>$job,'env'=>$target['kind'],'release'=>(int)$d['release_id'],'severity'=>$d['state']==='recovery_required'?'critical':'error','at'=>$t,'state'=>'bad','evidence'=>['event'=>$code,'object_id'=>$job,'release_id'=>(int)$d['release_id'],'environment'=>$target['kind'],'host_id'=>(int)$target['host_id'],'observed_at'=>$t,'method'=>'managed_deployment_record']]);
+        if($id!==null){if($s)opsAssociate($db,$p,$s,$id,$job);$ids[]=$id;}
     }return $ids;
 }
 function opsIncidentSignal(PDO $db,int $p,array $signal): bool {
     if($signal['source']==='logs'&&in_array($signal['code'],['deploy.failed','deploy.recovery_required'],true)){
-        // A registered deployment is authoritative; skip duplicate remote failure for it.
-        return !(bool)query($db,"SELECT 1 FROM ops_service_incidents WHERE project_id=? AND deployment_id=? UNION ALL SELECT 1 FROM deployments d JOIN ops_services s ON s.site_id=d.site_id AND s.project_id=d.project_id WHERE d.project_id=? AND d.id=? AND d.started_at IS NOT NULL AND d.finished_at>=s.created_at AND d.state IN ('failed','recovery_required')",[$p,$signal['object'],$p,$signal['object']])->fetchColumn();
+        // Managed jobs are reconciled from the executor, never from an unverified remote failure.
+        return false;
     }return true;
 }
 function opsAutoAssociate(PDO $db,int $p,int $id,array $signal): void {

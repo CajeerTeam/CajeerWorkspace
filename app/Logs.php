@@ -132,11 +132,13 @@ function logsFilters(PDO $db,int $project,array $b,array $args): array {
  $trace=$args['trace']??'';if(!is_string($trace)||($trace!==''&&!preg_match('/\A[a-f0-9]{32}\z/D',$trace)))throw new Problem('Некорректный correlation ID.');
  $level=$args['level']??'';if(!is_string($level)||!in_array($level,['','info','notice','warning','error','critical'],true))throw new Problem('Некорректный уровень.');
  $days=numberId($args['days']??min(7,(int)$b['retention_days']));if($days>(int)$b['retention_days'])throw new Problem('Диапазон превышает срок хранения.');
- return ['environment'=>$env,'release'=>$release,'trace'=>$trace,'level'=>$level,'days'=>$days];
+ $job=optionalId($args['job']??'');$host=null;
+ if($job!==null){$d=entity($db,'SELECT release_id,target_snapshot FROM deployments WHERE project_id=? AND id=?',[$project,$job]);$t=json_decode($d['target_snapshot'],true,32,JSON_THROW_ON_ERROR);if($release===null||(int)$d['release_id']!==$release||$env===''||($t['kind']??null)!==$env)throw new Problem('Задание не относится к выбранному выпуску и окружению.',409);$host=numberId($t['host_id']??null);}
+ return ['environment'=>$env,'release'=>$release,'trace'=>$trace,'level'=>$level,'days'=>$days,'job'=>$job,'host'=>$host];
 }
 function logsSearchQuery(array $c,array $f,int $from,int $now): array {
  $q=['project_id'=>$c['remote_project'],'source_id'=>$c['remote_source'],'source'=>$c['source_slug'],'service'=>'cajeerworkspace','tag'=>'workspace','from'=>gmdate('Y-m-d\TH:i:s\Z',$from),'to'=>gmdate('Y-m-d\TH:i:s\Z',$now+1),'limit'=>50];
- $context=[];if($f['environment']!=='')$context['environment']=$f['environment'];if($f['release']!==null)$context['release_id']=$f['release'];if($context)$q['context']=json_encode($context,JSON_THROW_ON_ERROR);if($f['trace']!=='')$q['trace_id']=$f['trace'];if($f['level']!=='')$q['level']=$f['level'];
+ $context=[];if($f['environment']!=='')$context['environment']=$f['environment'];if($f['release']!==null)$context['release_id']=$f['release'];if(($f['job']??null)!==null){$context['workspace_object']=$f['job'];$context['host_id']=$f['host'];}if($context)$q['context']=json_encode($context,JSON_THROW_ON_ERROR);if($f['trace']!=='')$q['trace_id']=$f['trace'];if($f['level']!=='')$q['level']=$f['level'];
  return $q;
 }
 function logsProjectRows(PDO $db,array $u,int $project,array $args,?callable $transport=null): array {
@@ -150,7 +152,7 @@ function logsProjectRows(PDO $db,array $u,int $project,array $args,?callable $tr
   if(!is_string($event)||!isset(LOG_EVENTS[$event])||!is_int($obj)||$obj<1||($env!==null&&!in_array($env,['dev','staging','prod'],true))||($rel!==null&&(!is_int($rel)||$rel<1))||($host!==null&&(!is_int($host)||$host<1))||($x['level']??null)!==LOG_EVENTS[$event])continue;
   $key=$x['request_id']??null;$trace=$x['trace_id']??null;if(!is_string($key)||!preg_match('/\A[a-f0-9]{32}\z/D',$key)||!is_string($trace)||!hash_equals(logsCorrelation($b,$rel,$env,$key),$trace))continue;
   $timestamp=$x['timestamp']??null;if(!is_string($timestamp)||!preg_match('/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\z/D',$timestamp))continue;$t=strtotime($timestamp);if($t===false||$t<$from||$t>$now)continue;
-  if(($f['environment']!==''&&$env!==$f['environment'])||($f['release']!==null&&$rel!==$f['release'])||($f['trace']!==''&&$trace!==$f['trace'])||($f['level']!==''&&LOG_EVENTS[$event]!==$f['level']))continue;
+  if(($f['job']!==null&&($obj!==$f['job']||$host!==$f['host']||!str_starts_with($event,'deploy.')))||($f['environment']!==''&&$env!==$f['environment'])||($f['release']!==null&&$rel!==$f['release'])||($f['trace']!==''&&$trace!==$f['trace'])||($f['level']!==''&&LOG_EVENTS[$event]!==$f['level']))continue;
   // Cross-check against our own authoritative release ID (no foreign object references in UI).
   if($rel!==null&&!query($db,'SELECT 1 FROM project_releases WHERE id=? AND project_id=?',[$rel,$project])->fetchColumn())continue;
   $safe[]=['timestamp'=>gmdate('Y-m-d H:i:s',$t),'event'=>$event,'level'=>LOG_EVENTS[$event],'object_id'=>$obj,'environment'=>$env,'release_id'=>$rel,'host_id'=>$host,'correlation_id'=>$trace,'request_id'=>$key];

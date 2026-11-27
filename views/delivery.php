@@ -1,6 +1,6 @@
 <?php namespace Workspace; $pid=(int)$project['id'];$r=$deliveryRelease;$rid=(int)$r['id']; ?>
 <p><a href="<?= h(url('project',['id'=>$pid])) ?>">← <?= h($project['title']) ?></a> · <a href="<?= h(url('releases',['project'=>$pid,'id'=>$rid])) ?>">Выпуск</a> · <a href="<?= h(url('deployments',['project'=>$pid])) ?>">Развёртывания</a></p>
-<section class="panel"><h2>Поставка <?= h($r['tag']) ?> · <?= h($r['state']) ?></h2>
+<p><a href="<?= h(url('release_trace',['project'=>$pid,'id'=>$rid])) ?>">След выпуска и эксплуатации (MFA)</a></p><section class="panel"><h2>Поставка <?= h($r['tag']) ?> · <?= h($r['state']) ?></h2>
 <p>SHA: <code><?= h($r['commit_sha']) ?></code></p><p>Артефакт <?= h($r['artifact_name']) ?> · SHA-256 <code><?= h($r['artifact_sha256']) ?></code></p>
 <?php if(!$deliveryActive): ?><p class="planning-warning">Подключение GitHub изменено или отключено. Подтверждение QA недоступно.</p><?php endif ?>
 <?php if(!$deliveryScopes): ?><p>Исторический выпуск: критерии и дополнительные PR не были зафиксированы. Для QA создайте новую карточку выпуска.</p><?php endif ?>

@@ -74,3 +74,5 @@ require_once __DIR__ . '/FinancialBooks.php';
 require_once __DIR__ . '/BankClosing.php';
 
 require_once __DIR__ . '/ContractControls.php';
+
+require_once __DIR__ . '/ReleaseTrace.php';
