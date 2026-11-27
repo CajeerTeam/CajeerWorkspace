@@ -15,7 +15,7 @@ if ($user && !empty($user['organization_id'])) {
 if ($user && updateAdmin($user)) $nav['workspace_updates']='Обновления Workspace';
 if ($user) { $nav['invite']='Приглашение'; $nav['security']='Безопасность'; }
 if ($user && ($_SESSION['auth_kind']??null)==='emergency' && !($_SESSION['emergency_verified']??false)) $nav=['security'=>'Безопасность'];
-$current = match ($view) {'project','task','workload','oss','github','releases','infrastructure','deployments'=>'projects','document'=>'documents',default=>$view};
+$current = match ($view) {'project','task','workload','oss','oss_maintenance','github','releases','infrastructure','deployments'=>'projects','document'=>'documents',default=>$view};
 ?><!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
 <title><?= h($title) ?> · CajeerWorkspace</title><link rel="stylesheet" href="./style.css"></head>

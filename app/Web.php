@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['lead'=>'Рабочее место тимлида','assistant'=>'AI-ассистент проекта','overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss'=>'Open-source workflow','github'=>'GitHub App','delivery'=>'Карточка поставки и QA','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
+const PAGE_TITLES = ['lead'=>'Рабочее место тимлида','assistant'=>'AI-ассистент проекта','overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss_maintenance'=>'Сопровождение OSS','oss'=>'Open-source workflow','github'=>'GitHub App','delivery'=>'Карточка поставки и QA','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
 const PAGE_RIGHTS = ['finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections','logs'=>'connections','logs.export'=>'connections','bots'=>'connections','incidents'=>'connections'];
 
 function h(mixed $value): string {
@@ -359,6 +359,10 @@ function handlePost(PDO $db, ?array $user): never {
             $pid=$projectId(); ghManage($db,$user,$pid,$act,$_POST); $_SESSION['notice']='Изменения GitHub сохранены.';
             if (in_array($act,['github.link','github.unlink'],true)) go('task',['id'=>numberId($_POST['task_id']??0)]);
             go('github',['project'=>$pid]);
+        case 'oss.line': case 'oss.fix': case 'oss.line.publish':
+            $pid=$projectId(); $f=$_POST; unset($f['csrf'],$f['request_key'],$f['act']);
+            if($act==='oss.line.publish') ossLinePublish($db,$user,$pid,$key,$f); else ossLineCommand($db,$user,$pid,$key,$act,$f);
+            $line=optionalId($f['line_id']??''); go('oss_maintenance',['project'=>$pid]+($line?['line'=>$line]:[]));
         case 'oss.invite': case 'oss.reissue':
             $pid=$projectId(); $token=ossIssue($db,$user,$pid,$_POST['display_name']??'',workloadInt($_POST['hours']??null,1,168),$key,$act==='oss.reissue'?numberId($_POST['contributor_id']??0):null);
             // One-time display, bound to both actor and project.
@@ -621,6 +625,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $data=releasePage($db,$user,numberId($_GET['project']??0),optionalId($_GET['id']??'')); break;
         case 'github':
             $data=ghPage($db,$user,numberId($_GET['project']??0)); break;
+        case 'oss_maintenance':
+            $data=ossLinePage($db,$user,numberId($_GET['project']??0),optionalId($_GET['line']??''),optionalId($_GET['id']??''),numberId($_GET['n']??1),word($_GET['state']??'',20,'Статус',false)); break;
         case 'oss':
             $pid=numberId($_GET['project']??0); $data=ossAdminPage($db,$user,$pid,optionalId($_GET['id']??''),numberId($_GET['n']??1),word($_GET['state']??'',20,'Статус',false));
             $token=$_SESSION['oss_token']??null; unset($_SESSION['oss_token']);

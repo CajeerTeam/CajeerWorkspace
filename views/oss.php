@@ -10,6 +10,7 @@
 <label>Доступ<select name="published"><?php selectOptions(['0'=>'Закрыт','1'=>'Опубликован'],$cfg['published']??0) ?></select></label><button class="primary">Сохранить профиль</button></form>
 <?php if ($cfg && $cfg['published']): ?><p><a href="<?= h(url('oss.public',['slug'=>$cfg['slug']])) ?>">Открыть публичную витрину</a></p><?php endif ?></section>
 <?php if (!$cfg) return; ?>
+<p><a href="<?= h(url('oss_maintenance',['project'=>$pid])) ?>">Сопровождение релизных линий и backport</a></p>
 <section class="panel inset"><h2>Внешние contributors</h2><p>Код одноразовый, действует 1–168 часов. Доступ действует до 30 дней, сессия — 30 минут бездействия. Код не подтверждает личность GitHub; проверяйте её отдельно. Повторная выдача отзывает старую сессию.</p>
 <?php if (!empty($inviteToken)): ?><div role="status" class="notice"><label>Передайте код защищённым каналом<input readonly value="<?= h($inviteToken) ?>"></label><a href="<?= h(url('oss.join')) ?>">Адрес входа contributor</a></div><?php endif ?>
 <form method="post" class="formgrid"><?php formFields('oss.invite') ?><input type="hidden" name="project_id" value="<?= $pid ?>"><label>Псевдоним<input name="display_name" maxlength="120" required></label><label>Срок, часов<input name="hours" type="number" min="1" max="168" value="24" required></label><button class="primary">Выдать код</button></form>

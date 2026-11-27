@@ -67,6 +67,33 @@ try {
     oc(!str_contains($json,'PRIVATE_')&&!str_contains($json,'External pseudonym')&&!str_contains($json,'contributor_id')&&!str_contains($json,'project_id'),'public data isolated');
     oc($data['milestones'][0]['state']==='closed','public milestone closed');
     deny(fn()=>$cmd('oss.milestone',['milestone_id'=>$m,'version'=>2,'milestone_version'=>2,'public_title'=>'Changed','description'=>'Changed']),409,'published milestone immutable');
+    $_SESSION=['mfa_at'=>time()];
+    $lineCmd=fn($act,$form,$key=null)=>ossLineCommand($db,$owner,$p,$key??okKey(),$act,$form);
+    deny(fn()=>ossLineCommand($db,$dev,$p,okKey(),'oss.line',['label'=>'Denied','branch'=>'denied','version'=>0]),403,'line rights');
+    $lineCmd('oss.line',['label'=>'Main','branch'=>'main','version'=>0]);$lineCmd('oss.line',['label'=>'LTS','branch'=>'release/1.x','version'=>0]);
+    $lines=ossLinePage($db,$owner,$p,null,null,1,'')['lines'];$l1=(int)$lines[0]['id'];$l2=(int)$lines[1]['id'];
+    $f=['line_id'=>$l1,'contribution_id'=>$con,'state'=>'ready','pr_number'=>'7','reason'=>'PRIVATE_REASON','version'=>0];$key=okKey();$lineCmd('oss.fix',$f,$key);$lineCmd('oss.fix',$f,$key);
+    $lineCmd('oss.fix',array_replace($f,['line_id'=>$l2,'pr_number'=>'9']));
+    deny(fn()=>$lineCmd('oss.fix',$f),409,'stale triage');
+    oc(count(ossContributorPage($db,$c,$con,1)['line_status'])===2,'author sees both lines');
+    oc(ossContributorPage($db,$c2,null,1)['line_notifications']===[],'other author isolated');
+    oc(!str_contains(json_encode(ossContributorPage($db,$c,$con,1)),'PRIVATE_REASON'),'internal reason not disclosed');
+    query($db,'INSERT INTO github_repositories(project_id,repository_id,installation_id,full_name) VALUES(?,?,?,?)',[$p,40,30,'example/repo']);
+    $rsa=openssl_pkey_new(['private_key_type'=>OPENSSL_KEYTYPE_RSA,'private_key_bits'=>2048]);openssl_pkey_export($rsa,$pem);
+    $sha=str_repeat('a',40);$branch='main';$tag='v2.0.0';$pr=7;
+    $app=new GitHubApp('20',$pem,function($method,$path,$token,$body)use(&$branch,&$tag,&$pr,$sha){
+        if($path==='/app/installations/30')return ['id'=>30,'app_id'=>20,'repository_selection'=>'selected','suspended_at'=>null];
+        if($path==='/app/installations/30/access_tokens')return ['token'=>'ghs_fixture_ephemeral_token','expires_at'=>gmdate('c',time()+3600),'permissions'=>$body['permissions'],'repositories'=>[['id'=>40]]];
+        if($path==='/installation/repositories?per_page=100')return ['total_count'=>1,'repositories'=>[['id'=>40,'full_name'=>'example/repo']]];
+        $suffix=substr($path,strlen('/repos/example/repo'));
+        return match($suffix){''=>['id'=>40,'private'=>false,'visibility'=>'public','full_name'=>'example/repo'],'/git/ref/tags/'.$tag=>['ref'=>'refs/tags/'.$tag,'object'=>['sha'=>$sha,'type'=>'commit']],'/git/ref/heads/'.rawurlencode($branch)=>['ref'=>'refs/heads/'.$branch,'object'=>['sha'=>$sha,'type'=>'commit']],'/releases/tags/'.$tag=>['id'=>$pr,'tag_name'=>$tag,'draft'=>false,'published_at'=>gmdate('c')],'/pulls/'.$pr=>['number'=>$pr,'merged'=>true,'state'=>'closed','base'=>['repo'=>['id'=>40],'ref'=>$branch],'merge_commit_sha'=>$sha],default=>throw new \RuntimeException('Unexpected remote: '.$suffix)};
+    });
+    $publication=['line_id'=>$l1,'version'=>1,'tag'=>$tag,'commit_sha'=>$sha,'title'=>'Public Main','notes'=>'Public changelog','fixes'=>[$con.':1']];$k=okKey();ossLinePublish($db,$owner,$p,$k,$publication,$app);ossLinePublish($db,$owner,$p,$k,$publication,$app);
+    $branch='release/1.x';$tag='v1.1.0';$pr=9;ossLinePublish($db,$owner,$p,okKey(),array_replace($publication,['line_id'=>$l2,'tag'=>$tag]),$app);
+    $published=ossPublicData($db,'public-oss')['line_releases'];oc(count($published)===2&&count($published[0]['items'])===1&&count($published[1]['items'])===1,'same contribution in two releases');
+    oc(!str_contains(json_encode($published),'PRIVATE_'),'public changelog projection');
+    $inbox=ossContributorPage($db,$c,$con,1);oc(count($inbox['comments'])===6&&count($inbox['line_notifications'])===2,'one notification per transition and release; no replay duplicate');
+    deny(fn()=>$lineCmd('oss.fix',array_replace($f,['version'=>2])),409,'published fix immutable');
     $cmd('oss.revoke',['contributor_id'=>$cid]); deny(fn()=>$external('oss.reply',['id'=>$con,'body'=>'no']),404,'revocation on write');
     $new=ossRedeem($db,ossIssue($db,$owner,$p,'',1,okKey(),$cid)); deny(fn()=>ossContributor($db,$cid,$grant),404,'old grant revoked after reissue');
     oc((int)ossContributor($db,$cid,$new['grant'])['id']===$cid,'new grant valid');
@@ -79,7 +106,7 @@ try {
     oc(sensitiveAction('oss.release')&&sensitiveAction('oss.invite'),'MFA policy');
     if (in_array('--postgres',$argv,true)) {
         $report=migrateToPostgres($dir.'/source.sqlite'); oc($report['tables']['oss_release_items']['rows']===1 && $report['tables']['oss_contributors']['rows']===2,'PostgreSQL transfer');
-        $pg=postgresConnect(); oc(ossPublicData($pg,'public-oss')['releases'][0]['items'][0]['public_note']==='Public contribution','PostgreSQL public snapshot');
+        $pg=postgresConnect(); oc(count(ossPublicData($pg,'public-oss')['line_releases'])===2,'PostgreSQL maintenance transfer'); oc(ossPublicData($pg,'public-oss')['releases'][0]['items'][0]['public_note']==='Public contribution','PostgreSQL public snapshot');
         deny(fn()=>ossContributor($pg,$cid,$grant),404,'PostgreSQL old grant');
         $fresh=ossRedeem($pg,ossIssue($pg,$owner,$p,'Postgres contributor',1,okKey())); oc((int)$fresh['id']>2,'PostgreSQL sequence'); $pg=null;
     }

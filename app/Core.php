@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.4.1';
-const SCHEMA_VERSION = 40;
+const VERSION = '1.4.2';
+const SCHEMA_VERSION = 41;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -144,7 +144,7 @@ function actionProject(PDO $db,string $name,int $id): array {
     [$project,$right]=match($name) {
         'invoice.create','invoice.line','invoice.remove','invoice.terms','invoice.issue','invoice.void','invoice.credit'=>[(int)entity($db,'SELECT project_id FROM invoices WHERE id=?',[$id])['project_id'],'payment.create'],
         'invoice.payment'=>[(int)entity($db,'SELECT project_id FROM payment_requests WHERE id=?',[$id])['project_id'],'payment.create'],
-        'oss.settings','oss.milestone','oss.revoke','oss.link','oss.triage','oss.comment','oss.release','project.create','rate.save'=>[$id,'manage'],
+        'oss.line','oss.fix','oss.line.publish','oss.settings','oss.milestone','oss.revoke','oss.link','oss.triage','oss.comment','oss.release','project.create','rate.save'=>[$id,'manage'],
         'availability.save'=>[$id,'work'],
         'sprint.save','sprint.state','sprint.task'=>[(int)entity($db,'SELECT project_id FROM sprints WHERE id=?',[$id])['project_id'],'manage'],
         'time.save','time.submit','time.approve','time.reject'=>[(int)entity($db,'SELECT project_id FROM timesheets WHERE id=?',[$id])['project_id'],in_array($name,['time.approve','time.reject'],true)?'manage':'work'],

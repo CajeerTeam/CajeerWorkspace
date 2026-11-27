@@ -42,11 +42,12 @@ function ossPublicData(PDO $db,string $slug,int $page=1): array {
     $p=ossPublic($db,$slug); $pid=(int)$p['project_id']; unset($p['project_id']);
     $milestones=query($db,'SELECT public_title,description,due_on,state FROM oss_milestones WHERE project_id=? ORDER BY milestone_id DESC LIMIT 51 OFFSET '.$offset,[$pid])->fetchAll();
     $releases=query($db,'SELECT id,tag,title,notes,published_at FROM oss_releases WHERE project_id=? ORDER BY id DESC LIMIT 51 OFFSET '.$offset,[$pid])->fetchAll();
-    $more=count($milestones)>50 || count($releases)>50; $milestones=array_slice($milestones,0,50); $releases=array_slice($releases,0,50);
+    $lineReleases=ossLinePublic($db,$pid,$offset);
+    $more=count($milestones)>50 || count($releases)>50 || count($lineReleases)>50; $milestones=array_slice($milestones,0,50); $releases=array_slice($releases,0,50);
     foreach ($releases as &$r) {
         $r['items']=query($db,'SELECT public_note,upstream_url FROM oss_release_items WHERE project_id=? AND release_id=? ORDER BY contribution_id',[$pid,$r['id']])->fetchAll(); unset($r['id']);
     } unset($r);
-    return ['project'=>$p,'milestones'=>$milestones,'releases'=>$releases,'page'=>$page,'next_page'=>$more?$page+1:null];
+    return ['project'=>$p,'milestones'=>$milestones,'releases'=>$releases,'line_releases'=>array_slice($lineReleases,0,50),'page'=>$page,'next_page'=>$more?$page+1:null];
 }
 function ossContribution(PDO $db,int $pid,int $id): array {
     return entity($db,'SELECT * FROM oss_contributions WHERE project_id=? AND id=?',[$pid,$id]);
@@ -147,9 +148,9 @@ function ossCommand(PDO $db,array $user,string $key,int $pid,string $act,array $
                 $mid=numberId($f['milestone_id']??0); $m=entity($db,'SELECT m.state,m.version FROM milestones m JOIN oss_milestones om ON om.milestone_id=m.id AND om.project_id=m.project_id WHERE m.project_id=? AND m.id=?',[$pid,$mid]);
                 if ($m['state']!=='closed' || (int)$m['version']!==numberId($f['milestone_version']??0)) throw new Problem('Для выпуска закройте актуальную публичную веху.',409);
                 $tag=ossTag($f['tag']??''); $title=word($f['title']??'',180,'Название выпуска'); $notes=ossText($f['notes']??''); if ($notes==='') throw new Problem('Заполните release notes.');
-                if (query($db,'SELECT 1 FROM oss_releases WHERE project_id=? AND (milestone_id=? OR tag=?)',[$pid,$mid,$tag])->fetchColumn()) throw new Problem('Выпуск или тег уже существует.',409);
+                if (query($db,'SELECT 1 FROM oss_releases WHERE project_id=? AND (milestone_id=? OR tag=?)',[$pid,$mid,$tag])->fetchColumn() || query($db,'SELECT 1 FROM oss_line_releases WHERE project_id=? AND tag=?',[$pid,$tag])->fetchColumn()) throw new Problem('Выпуск или тег уже существует.',409);
                 $ids=$f['contribution_ids']??[]; if (!is_array($ids)||count($ids)>100) throw new Problem('До 100 вкладов на выпуск.'); $ids=array_map(__NAMESPACE__.'\\numberId',$ids); if (count(array_unique($ids))!==count($ids)) throw new Problem('Повтор вклада.');
-                $items=[]; foreach ($ids as $id) { $items[]=entity($db,"SELECT c.id,c.public_note,c.upstream_url FROM oss_contributions c JOIN task_milestones tm ON tm.project_id=c.project_id AND tm.task_id=c.task_id JOIN tasks t ON t.id=c.task_id AND t.project_id=c.project_id WHERE c.project_id=? AND c.id=? AND c.state='accepted' AND t.state='done' AND tm.milestone_id=? AND NOT EXISTS(SELECT 1 FROM oss_release_items ri WHERE ri.contribution_id=c.id)",[$pid,$id,$mid]); }
+                $items=[]; foreach ($ids as $id) { $items[]=entity($db,"SELECT c.id,c.public_note,c.upstream_url FROM oss_contributions c JOIN task_milestones tm ON tm.project_id=c.project_id AND tm.task_id=c.task_id JOIN tasks t ON t.id=c.task_id AND t.project_id=c.project_id WHERE c.project_id=? AND c.id=? AND c.state='accepted' AND t.state='done' AND tm.milestone_id=? AND NOT EXISTS(SELECT 1 FROM oss_release_items ri WHERE ri.contribution_id=c.id) AND NOT EXISTS(SELECT 1 FROM oss_line_fixes f WHERE f.project_id=c.project_id AND f.contribution_id=c.id)",[$pid,$id,$mid]); }
                 $rid=insertId($db,'INSERT INTO oss_releases(project_id,milestone_id,tag,title,notes,published_at,published_by) VALUES(?,?,?,?,?,?,?)',[$pid,$mid,$tag,$title,$notes,time(),$u['id']]);
                 foreach ($items as $item) query($db,'INSERT INTO oss_release_items(release_id,project_id,contribution_id,public_note,upstream_url) VALUES(?,?,?,?,?)',[$rid,$pid,$item['id'],$item['public_note'],$item['upstream_url']]);
                 query($db,"UPDATE oss_milestones SET state='closed',version=version+1 WHERE project_id=? AND milestone_id=?",[$pid,$mid]); break;
@@ -174,7 +175,7 @@ function ossContributorPage(PDO $db,array $c,?int $id,int $page): array {
     $pid=(int)$c['project_id']; $uid=(int)$c['id']; $offset=ossPageOffset($page);
     $rows=query($db,'SELECT id,title,body,upstream_url,state,created_at FROM oss_contributions WHERE project_id=? AND contributor_id=? ORDER BY id DESC LIMIT 51 OFFSET '.$offset,[$pid,$uid])->fetchAll();
     $selected=$id===null?null:entity($db,'SELECT id,title,body,upstream_url,state,created_at FROM oss_contributions WHERE project_id=? AND contributor_id=? AND id=?',[$pid,$uid,$id]);
-    return ['contributor'=>$c,'rows'=>array_slice($rows,0,50),'more'=>count($rows)>50,'page'=>$page,'selected'=>$selected,'comments'=>$selected?ossThread($db,$pid,$id):[]];
+    return ['contributor'=>$c,'rows'=>array_slice($rows,0,50),'more'=>count($rows)>50,'page'=>$page,'selected'=>$selected,'comments'=>$selected?ossThread($db,$pid,$id):[], 'line_status'=>$selected?query($db,'SELECT l.label,f.state,r.tag FROM oss_line_fixes f JOIN oss_lines l ON l.project_id=f.project_id AND l.id=f.line_id LEFT JOIN oss_line_releases r ON r.project_id=f.project_id AND r.id=f.release_id WHERE f.project_id=? AND f.contribution_id=? ORDER BY l.id',[$pid,$id])->fetchAll():[], 'line_notifications'=>query($db,"SELECT c.id,c.title,l.label,f.state,r.tag,f.updated_at FROM oss_line_fixes f JOIN oss_contributions c ON c.project_id=f.project_id AND c.id=f.contribution_id JOIN oss_lines l ON l.project_id=f.project_id AND l.id=f.line_id LEFT JOIN oss_line_releases r ON r.project_id=f.project_id AND r.id=f.release_id WHERE f.project_id=? AND c.contributor_id=? ORDER BY f.updated_at DESC,f.line_id DESC,f.contribution_id DESC LIMIT 50",[$pid,$uid])->fetchAll()];
 }
 function ossAdminPage(PDO $db,array $user,int $pid,?int $id,int $page,string $state): array {
     ossMaintainer($db,$user,$pid); $offset=ossPageOffset($page);
@@ -190,6 +191,6 @@ function ossAdminPage(PDO $db,array $user,int $pid,?int $id,int $page,string $st
     $data['contributors']=array_slice($data['contributors'],0,50); $data['milestones']=array_slice($data['milestones'],0,50);
     // Only approved, still completed and unreleased contributions are candidates; publication rechecks all of this.
     $visibleIds=array_column($data['milestones'],'id');
-    $data['eligible']=!$visibleIds?[]:query($db,"SELECT id,public_note,milestone_id FROM (SELECT c.id,c.public_note,tm.milestone_id,ROW_NUMBER() OVER (PARTITION BY tm.milestone_id ORDER BY c.id) AS rn FROM oss_contributions c JOIN task_milestones tm ON tm.project_id=c.project_id AND tm.task_id=c.task_id JOIN tasks t ON t.project_id=c.project_id AND t.id=c.task_id WHERE c.project_id=? AND tm.milestone_id IN (".implode(',',array_fill(0,count($visibleIds),'?')).") AND c.state='accepted' AND t.state='done' AND NOT EXISTS(SELECT 1 FROM oss_release_items ri WHERE ri.contribution_id=c.id)) AS candidates WHERE rn<=100 ORDER BY id",[$pid,...$visibleIds])->fetchAll();
+    $data['eligible']=!$visibleIds?[]:query($db,"SELECT id,public_note,milestone_id FROM (SELECT c.id,c.public_note,tm.milestone_id,ROW_NUMBER() OVER (PARTITION BY tm.milestone_id ORDER BY c.id) AS rn FROM oss_contributions c JOIN task_milestones tm ON tm.project_id=c.project_id AND tm.task_id=c.task_id JOIN tasks t ON t.project_id=c.project_id AND t.id=c.task_id WHERE c.project_id=? AND tm.milestone_id IN (".implode(',',array_fill(0,count($visibleIds),'?')).") AND c.state='accepted' AND t.state='done' AND NOT EXISTS(SELECT 1 FROM oss_release_items ri WHERE ri.contribution_id=c.id) AND NOT EXISTS(SELECT 1 FROM oss_line_fixes f WHERE f.project_id=c.project_id AND f.contribution_id=c.id)) AS candidates WHERE rn<=100 ORDER BY id",[$pid,...$visibleIds])->fetchAll();
     return $data;
 }
