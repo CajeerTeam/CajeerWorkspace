@@ -325,7 +325,8 @@ function handlePost(PDO $db, ?array $user): never {
         case 'econ.settings': case 'econ.budget': case 'econ.rate': case 'econ.class': case 'econ.plan': case 'econ.allocate': case 'econ.cancel': case 'econ.reschedule': case 'econ.unallocate':
             $pid=$projectId();$month=econMonth($_POST['report_month']??gmdate('Y-m'));$horizon=calendarDate($_POST['horizon']??gmdate('Y-m-d',time()+90*86400));
             econCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Экономика проекта: изменения сохранены.';go('economics',['project'=>$pid,'month'=>substr($month,0,7),'horizon'=>$horizon]);
-        case 'bank.account': case 'bank.rate': case 'bank.import': case 'bank.match': case 'bank.unmatch': case 'bank.reconcile':
+        case 'bank.format': case 'bank.review': case 'bank.account': case 'bank.rate': case 'bank.import': case 'bank.match': case 'bank.unmatch': case 'bank.reconcile':
+            if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
             $form=$_POST;
             if($act==='bank.import' && isset($_FILES['statement_file']) && $_FILES['statement_file']['error']!==UPLOAD_ERR_NO_FILE){
                 accountingUser($db,$user,true);$upload=$_FILES['statement_file'];
@@ -333,7 +334,7 @@ function handlePost(PDO $db, ?array $user): never {
                 $form['csv']=file_get_contents($upload['tmp_name'],false,null,0,1048577);
             }
             $bid=bankCommand($db,$user,$key,$act,$form);$params=[];
-            if($act==='bank.account')$params=['account'=>$bid];elseif($act==='bank.import')$params=['statement'=>$bid];elseif(in_array($act,['bank.match','bank.unmatch'],true))$params=['statement'=>(int)bankRow($db,(int)$user['organization_id'],$bid)['statement_id'],'row'=>$bid,'filter'=>'all'];elseif($act==='bank.reconcile')$params=['statement'=>numberId($form['id'])];
+            if($act==='bank.account')$params=['account'=>$bid];elseif($act==='bank.import')$params=['statement'=>$bid];elseif(in_array($act,['bank.match','bank.unmatch','bank.review'],true))$params=['statement'=>(int)bankRow($db,(int)$user['organization_id'],$bid)['statement_id'],'row'=>$bid,'filter'=>'all'];elseif($act==='bank.reconcile')$params=['statement'=>numberId($form['id'])];
             $_SESSION['notice']='Банковская операция сохранена.';go('bank',$params);
         case 'books.assign': case 'books.allocate': case 'books.period': case 'books.close': case 'books.bill': case 'books.pay': case 'books.refund': case 'books.cancel':
             bookCommand($db,$user,$key,$act,$_POST);$_SESSION['notice']='Операция книги сохранена.';go('books',['entity'=>numberId($_POST['entity_id']??0)]);
@@ -630,9 +631,11 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'economics':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
             $data=econPage($db,$user,$projectId,econMonth($_GET['month']??gmdate('Y-m')),calendarDate($_GET['horizon']??gmdate('Y-m-d',time()+90*86400)));break;
+        case 'bank.export':
+            $sid=numberId($_GET['statement']??0);$export=bankExport($db,$user,$sid);$json=json_encode($export,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="bank-statement-'.$sid.'.json"');header('Cache-Control: private, no-store');echo $json;return;
         case 'bank':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор в разделе «Безопасность».',403);
-            $data=bankPage($db,$user,optionalId($_GET['account']??''),optionalId($_GET['statement']??''),optionalId($_GET['row']??''),choice($_GET['filter']??'unmatched',['all'=>'','unmatched'=>'','matched'=>'']),optionalId($_GET['after']??''));break;
+            $data=bankPage($db,$user,optionalId($_GET['account']??''),optionalId($_GET['statement']??''),optionalId($_GET['row']??''),choice($_GET['filter']??'unmatched',['all'=>'','unmatched'=>'','matched'=>'','review'=>'']),optionalId($_GET['after']??''));break;
         case 'books':
             $data=booksPage($db,$user,optionalId($_GET['entity']??''),optionalId($_GET['period']??''),optionalId($_GET['before']??''));break;
         case 'accounting':

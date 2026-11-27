@@ -106,6 +106,7 @@ function bookCommand(PDO $db,array $user,string $key,string $act,array $form): i
             foreach(bookPayableControl(bookTrial($db,$org,$e,$p['starts_on'],$p['ends_on']),bookPayableAt($db,$e,$p['ends_on'])) as $c=>$row)if(!$row['ok'])throw new Problem('Задолженность поставщикам не сходится: '.$c,409);
             foreach(bookCashControl($db,$org,$p['ends_on']) as $row)if(!$row['ok'])throw new Problem('Распределение кассы не сходится.',409);
             if(!accountingReconcile($db,$org)['ok'])throw new Problem('Общая касса не сверена.',409);
+            bankCloseCheck($db,$org,$e,$p['starts_on'],$p['ends_on'],$actor);
             query($db,'UPDATE finance_book_periods SET closed_by=?,closed_at=? WHERE id=?',[$actor,time(),$id]);
         }else{
             $date=calendarDate($f['booked_on']);if($date>gmdate('Y-m-d'))throw new Problem('Будущая дата начисления или оплаты недопустима.');bookOpenPeriod($db,$e,$date);$period=accountingPeriod($db,$org,$date);

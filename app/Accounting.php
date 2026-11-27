@@ -160,6 +160,7 @@ function accountingCommand(PDO $db,array $user,string $key,string $act,array $fo
                 if(query($db,"SELECT 1 FROM payment_requests r JOIN projects p ON p.id=r.project_id WHERE p.organization_id=? AND r.status='pending' AND r.booked_on>=? AND r.booked_on<=?",[$org,$p['starts_on'],$p['ends_on']])->fetchColumn())throw new Problem('Есть нерассмотренные платежи периода.',409);
                 if(!accountingReconcile($db,$org)['ok'])throw new Problem('Кассовая книга не сходится с журналом.',409);
                 foreach(accountingTrial($db,$org,$p)['totals'] as $t)if($t['opening']!==0||$t['closing']!==0||$t['debit']!==$t['credit'])throw new Problem('Оборотно-сальдовая ведомость не сходится.',409);
+                bankCloseCheck($db,$org,null,$p['starts_on'],$p['ends_on'],$actor);
                 query($db,'UPDATE accounting_periods SET closed_by=?,closed_at=? WHERE id=?',[$actor,time(),$id]);
             }else{
                 $date=calendarDate($f['booked_on']);if($date>gmdate('Y-m-d'))throw new Problem('Проводка не может иметь будущую дату.');$period=accountingPeriod($db,$org,$date);$memo=word($f['memo'],500,'Основание');
