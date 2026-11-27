@@ -243,12 +243,14 @@ function handlePost(PDO $db, ?array $user): never {
             $pid=$projectId();$result=incidentScan($db,$user,$pid);$_SESSION['notice']='Новых сигналов: '.$result['accepted'].'. Проверок инфраструктуры: '.$result['infra_checks'].($result['errors']?' · ошибки '.implode(', ',$result['errors']):'').($result['logs_truncated']?' · выборка Logs неполная':'');go('incidents',['project'=>$pid]);
         case 'incident.assign': case 'incident.link': case 'incident.ack': case 'incident.resolve':
             $pid=$projectId();$id=numberId($_POST['id']??null);incidentCommand($db,$user,$pid,$id,numberId($_POST['version']??null),substr($act,9),$_POST);go('incidents',['project'=>$pid,'id'=>$id]);
+        case 'bots.feedback':
+            $pid=$projectId();if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите ручную регистрацию.');$sid=numberId($_POST['service_id']??null);$id=botsFeedback($db,$user,$pid,$sid,$_POST['external_id']??null,$_POST['received_at']??null,$_POST['title']??null,$_POST['description']??null,$_POST['requester']??null);go('service_ops',['project'=>$pid,'service'=>$sid]);
         case 'bots.binding':
-            $pid=$projectId();if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите привязку.');botsConfigure($db,$user,$pid,choice($_POST['active']??'',['1'=>'on','0'=>'off'])==='1');go('bots',['project'=>$pid]);
+            $pid=$projectId();if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите привязку.');$active=choice($_POST['active']??'',['1'=>'on','0'=>'off'])==='1';botsConfigure($db,$user,$pid,$active,null,$active?word($_POST['identity_hash']??'',64,'Выбранный канал'):null);go('bots',['project'=>$pid]);
         case 'bots.draft':
-            $pid=$projectId();$id=botsDraft($db,$user,$pid,$key,optionalId($_POST['release_id']??''),$_POST['message']??null);go('bots',['project'=>$pid,'id'=>$id]);
+            $pid=$projectId();$id=botsDraft($db,$user,$pid,$key,optionalId($_POST['release_id']??''),$_POST['message']??null,null,optionalId($_POST['support_id']??''));go('bots',['project'=>$pid,'id'=>$id]);
         case 'bots.confirm': case 'bots.retry': case 'bots.cancel': case 'bots.check': case 'bots.close':
-            $pid=$projectId();$id=numberId($_POST['id']??0);if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите действие.');botsCommand($db,$user,$pid,$id,substr($act,5),word($_POST['preview_hash']??'',64,'Снимок'));go('bots',['project'=>$pid,'id'=>$id]);
+            $pid=$projectId();$id=numberId($_POST['id']??0);if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите действие.');botsCommand($db,$user,$pid,$id,substr($act,5),word($_POST['preview_hash']??'',64,'Снимок'),$_POST['reason']??null,optionalId($_POST['event_id']??''));go('bots',['project'=>$pid,'id'=>$id]);
         case 'logs.policy':
             $pid=$projectId();if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите политику.');
             logsConfigure($db,$user,$pid,numberId($_POST['days']??0),choice($_POST['active']??'', ['1'=>'on','0'=>'off'])==='1');go('logs',['project'=>$pid]);

@@ -77,3 +77,5 @@ require_once __DIR__ . '/BankClosing.php';
 require_once __DIR__ . '/ContractControls.php';
 
 require_once __DIR__ . '/ReleaseTrace.php';
+
+require_once __DIR__ . '/BotsSupport.php';

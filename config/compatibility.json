@@ -1,6 +1,6 @@
 {
-  "version": "1.7.1",
-  "schema": 50,
+  "version": "1.7.2",
+  "schema": 51,
   "authentication": {"installation_modes": ["local", "mixed", "required"], "organization_modes": ["inherit", "required"], "legacy_default": "preserve"},
   "runtime": {"php_ci": ["8.3", "8.4", "8.5"], "php_min": "8.3", "sqlite_min": "3.27.0", "postgres_min": "14", "postgres_ci": ["14", "16"], "python_min": "3.9", "architecture": 64},
   "integrations": {
@@ -9,7 +9,7 @@
     "forum": {"version": "1.6.0", "capabilities": ["board_acl", "thread", "moderation", "reconcile", "editorial_exact_recovery"], "owner_role": "team_lead"},
     "book": {"version": "1.2.0", "capabilities": ["public_reader", "immutable_snapshot", "review", "editorial_compare"], "owner_role": "team_lead"},
     "lite": {"version": "1.6.0", "capabilities": ["native_publish", "backup_restore", "revision_conflict", "editorial_observation"], "owner_role": "on_call"},
-    "bots": {"version": "1.0.2", "required_patch": "integrations/cajeerbots-1.0.2-workspace.patch", "capabilities": ["workspace_delivery_v1", "preview_confirm", "queue_cancel", "reconcile"], "owner_role": "on_call"},
+    "bots": {"version": "1.0.2", "required_patch": "integrations/cajeerbots-1.0.2-workspace.patch", "capabilities": ["workspace_delivery_v1", "preview_confirm", "queue_cancel", "reconcile", "support_feedback", "manual_reconciliation"], "owner_role": "on_call"},
     "servers": {"version": "1.0.2", "capabilities": ["inventory_read", "incident_signal"], "owner_role": "on_call"},
     "aapanel": {"version": null, "capabilities": ["inventory_read", "site_ssl_signal"], "owner_role": "on_call"},
     "github": {"version": "2026-03-10", "capabilities": ["repository_read", "app_webhook", "pr_ci", "release_sha"], "owner_role": "team_lead"}

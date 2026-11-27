@@ -75,7 +75,7 @@ function migrationFiles(?PDO $db=null): array {
     if (array_keys($files)!==range(1,SCHEMA_VERSION)) throw new Problem('Набор миграций не соответствует версии схемы.',503);
     // The candidate freezes both dialects independently of the mutable DB ledger.
     $rawFreeze=@file_get_contents(ROOT.'/database/schema-freeze.json');
-    if ($rawFreeze===false || !hash_equals('2f9d602b8a9d8408efa447dd08527c014be8f981116717d4fe10c91ad1128ab7',hash('sha256',$rawFreeze))) throw new Problem('Контрольная сумма заморозки схемы не совпадает.',503);
+    if ($rawFreeze===false || !hash_equals('79343e2c4b9309a395b2c89e7918de1ea25f9fcc3b995aefc8e485f67c6dda86',hash('sha256',$rawFreeze))) throw new Problem('Контрольная сумма заморозки схемы не совпадает.',503);
     $freeze=json_decode($rawFreeze,true);
     if (!is_array($freeze) || ($freeze['schema']??null)!==SCHEMA_VERSION || !is_array($freeze['migrations']??null) || count($freeze['migrations'])!==2*SCHEMA_VERSION) throw new Problem('Нарушена заморозка схемы.',503);
     $prefix='database/'.($db && isPostgres($db)?'postgresql/':'');

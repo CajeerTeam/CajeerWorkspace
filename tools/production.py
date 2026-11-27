@@ -18,11 +18,11 @@ import release
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
 REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json')
-VERSION = '1.7.1'
-PREVIOUS = '1.7.0'
+VERSION = '1.7.2'
+PREVIOUS = '1.7.1'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
-CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy', 'assistant_confirmed_drafts', 'team_lead_review', 'team_lead_decisions', 'team_lead_dependencies', 'oss_release_lines', 'oss_backport_changelog', 'oss_contributor_notifications', 'service_operations', 'owner_portfolio', 'budget_versions', 'collection_forecast', 'team_capacity', 'capacity_substitution', 'queue_forecast', 'freelance_package', 'freelance_advance_and_recurring', 'freelance_client_acceptance', 'entity_books', 'supplier_accruals', 'supplier_payments_and_refunds', 'bank_format_versions', 'bank_independent_review', 'bank_closing_export', 'contract_signer_authority', 'contract_terms_revision', 'contract_deadline_tasks', 'jurisdiction_rule_versions', 'jurisdiction_exchange_receipts', 'sign_test_live_isolation', 'release_trace_identity', 'release_trace_logs', 'release_trace_incident', 'editorial_versioned_compare', 'editorial_revocation', 'editorial_interrupted_recovery')
+CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy', 'assistant_confirmed_drafts', 'team_lead_review', 'team_lead_decisions', 'team_lead_dependencies', 'oss_release_lines', 'oss_backport_changelog', 'oss_contributor_notifications', 'service_operations', 'owner_portfolio', 'budget_versions', 'collection_forecast', 'team_capacity', 'capacity_substitution', 'queue_forecast', 'freelance_package', 'freelance_advance_and_recurring', 'freelance_client_acceptance', 'entity_books', 'supplier_accruals', 'supplier_payments_and_refunds', 'bank_format_versions', 'bank_independent_review', 'bank_closing_export', 'contract_signer_authority', 'contract_terms_revision', 'contract_deadline_tasks', 'jurisdiction_rule_versions', 'jurisdiction_exchange_receipts', 'sign_test_live_isolation', 'release_trace_identity', 'release_trace_logs', 'release_trace_incident', 'editorial_versioned_compare', 'editorial_revocation', 'editorial_interrupted_recovery', 'bots_support_feedback', 'bots_manual_reconciliation')
 CI = ('verify', 'postgres', 'bots-compatibility', 'recovery-postgres', 'release-rehearsal', 'package')
 MAX_JSON = 1024 * 1024
 require = recovery.require
@@ -74,7 +74,7 @@ def timestamp(value):
 def matrix(archive):
     payload=candidate.archive_payload(archive, VERSION)
     m=decode(payload['config/compatibility.json'])
-    require(m['version']==VERSION and m['schema']==50, 'Compatibility matrix mismatch')
+    require(m['version']==VERSION and m['schema']==51, 'Compatibility matrix mismatch')
     return m, recovery.sha(payload['config/compatibility.json'])
 
 
@@ -108,7 +108,7 @@ def sign_file(path, key, target):
 
 def check_reports(reports, m, archive_sha, previous_sha):
     t,p,l,r,v=(decode(reports[n]) for n in REPORTS)
-    require(t['version']==VERSION and t['schema']==50 and t['topology_ready'] is True and t['guest_ready'] is True and t['issues']==[] and len(t['projects'])==3 and len(t['staff'])==8 and len(t['teams'])==2 and t['guest_active_ids'], 'Pilot topology or guest not accepted')
+    require(t['version']==VERSION and t['schema']==51 and t['topology_ready'] is True and t['guest_ready'] is True and t['issues']==[] and len(t['projects'])==3 and len(t['staff'])==8 and len(t['teams'])==2 and t['guest_active_ids'], 'Pilot topology or guest not accepted')
     require(p['version']==VERSION and p['mode']=='live_readiness' and p['ready'] is True,'Live readiness not accepted')
     exact(p['connections'],m['integrations'])
     exact(v, ('version','archive_sha256','previous_sha256','checked_at','stand','tax_profile','signature_provider','backend','php_version','database_version','owners','integrations','scenarios','checks','ci','thresholds','open_critical_defects'))
@@ -192,7 +192,7 @@ def draft(archive, previous_sha, folder, entries):
 def statement(archive, previous_sha, reports, trust_pin):
     require(release.verify(archive)==VERSION,'Invalid release'); m,msha=matrix(archive); a_sha=recovery.digest(archive)
     summary=check_reports(reports,m,a_sha,digest(previous_sha))
-    return {'format':1,'version':VERSION,'schema':50,'archive_sha256':a_sha,'previous_sha256':previous_sha,'matrix_sha256':msha,'trust_sha256':digest(trust_pin),'reports':{n:recovery.sha(reports[n]) for n in REPORTS},'summary':summary}
+    return {'format':1,'version':VERSION,'schema':51,'archive_sha256':a_sha,'previous_sha256':previous_sha,'matrix_sha256':msha,'trust_sha256':digest(trust_pin),'reports':{n:recovery.sha(reports[n]) for n in REPORTS},'summary':summary}
 
 
 def fresh(item):

@@ -150,6 +150,8 @@ jobs:
       - run: php tests/editorial_db.php
       - run: python3 tests/logs_schema.py
       - run: php tests/logs_db.php
+      - run: php tests/bots_support_unit.php
+      - run: python3 tests/bots_support_schema.py
       - run: python3 tests/bots_schema.py
       - run: php tests/bots_db.php
       - run: python3 tests/incidents_schema.py
@@ -400,13 +402,13 @@ jobs:
           set -euo pipefail
           previous=''
           while IFS= read -r commit; do
-            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.7.0' ]]; then
+            if [[ "$(git show "$commit:VERSION" 2>/dev/null || true)" == '1.7.1' ]]; then
               previous="$commit"
               break
             fi
           done < <(git log --first-parent --format=%H HEAD)
           if [[ -z "$previous" ]]; then
-            echo 'Actual 1.7.0 predecessor missing from Git history; release gate blocked.' >&2
+            echo 'Actual 1.7.1 predecessor missing from Git history; release gate blocked.' >&2
             exit 1
           fi
           # Use the last first-parent release ancestor, not an unrelated branch or a version-edited candidate.
@@ -414,7 +416,7 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/previous-source"
           git archive "$previous" | tar -x -C "$RUNNER_TEMP/previous-source"
           python3 "$RUNNER_TEMP/previous-source/tools/release.py" build --output "$RUNNER_TEMP/previous-dist"
-          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.7.0.zip"
+          export WORKSPACE_PREVIOUS_RELEASE="$RUNNER_TEMP/previous-dist/CajeerWorkspace-1.7.1.zip"
           WORKSPACE_CANDIDATE_REQUIRE_NATIVE=1 python3 tests/candidate.py
           python3 -B tests/update_install.py InstallTests.test_install_finish InstallTests.test_scheduler_uses_real_installer
           python3 tests/production.py
