@@ -63,3 +63,5 @@ require_once __DIR__ . '/ServiceOps.php';
 
 require_once __DIR__ . '/Portfolio.php';
 require_once __DIR__ . '/ProjectManagement.php';
+
+require_once __DIR__ . '/Capacity.php';

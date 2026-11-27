@@ -3,7 +3,7 @@ $notice = $_SESSION['notice'] ?? null;
 unset($_SESSION['notice']);
 $nav = ['overview'=>'Обзор','projects'=>'Проекты'];
 if ($user && !empty($user['organization_id'])) {
-    $nav['search']='Поиск'; if(aiEnabled())$nav['assistant']='AI-ассистент'; $nav['notifications']='Напоминания'; if($user['role']==='owner') {$nav['digest']='Сводка владельцу';$nav['portfolio']='Портфель';$nav['reliability']='Надёжность интеграций';}
+    $nav['search']='Поиск'; if(aiEnabled())$nav['assistant']='AI-ассистент'; $nav['notifications']='Напоминания'; if($user['role']==='owner') {$nav['digest']='Сводка владельцу';$nav['portfolio']='Портфель';$nav['capacity']='Ёмкость команд';$nav['reliability']='Надёжность интеграций';}
     if ($user['role']==='owner') $nav['clients']='Клиенты и заказы';
     if (($user['nav_rights']['finance']??can($user,'finance'))) { $nav['finance']='Финансы'; $nav['payments']='Платежи'; $nav['invoices']='Счета'; $nav['economics']='Экономика'; $nav['approved_acts']='Принятые акты'; }
     if (in_array($user['role'],['owner','accountant'],true)) { $nav['accounting']='Бухгалтерия'; $nav['bank']='Банк'; $nav['tax']='UK VAT'; }

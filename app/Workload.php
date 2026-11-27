@@ -69,7 +69,10 @@ function saveAvailability(PDO $db,array $user,string $key,int $project,int $uid,
         requireProjectRight($db,$u,$project,(int)$u['id']===$uid?'work':'manage'); workloadMember($db,$u,$project,$uid);
         $old=query($db,'SELECT version FROM project_availability WHERE project_id=? AND user_id=? AND week_on=?',[$project,$uid,$week])->fetchColumn();
         if ((int)$old!==$version) throw new Problem('Доступность уже изменена.',409);
-        query($db,'INSERT INTO project_availability(project_id,user_id,week_on,minutes,version) VALUES(?,?,?,?,1) ON CONFLICT(project_id,user_id,week_on) DO UPDATE SET minutes=excluded.minutes,version=project_availability.version+1',[$project,$uid,$week,$minutes]); return $project;
+        $allocation=capacityAllocation($db,$project,$uid,$week);
+        if($allocation['team_id']!==null)throw new Problem('Назначение команды изменяется в разделе «Ёмкость команд».',409);
+        capacityGuardAvailability($db,(int)$u['organization_id'],$project,$uid,$week,$minutes);
+        query($db,'INSERT INTO project_availability(project_id,user_id,week_on,minutes,version) VALUES(?,?,?,?,1) ON CONFLICT(project_id,user_id,week_on) DO UPDATE SET minutes=excluded.minutes,version=project_availability.version+1',[$project,$uid,$week,$minutes]); if($minutes===0)query($db,'DELETE FROM capacity_teams WHERE project_id=? AND user_id=? AND week_on=?',[$project,$uid,$week]); return $project;
     });
 }
 function saveRate(PDO $db,array $user,string $key,int $project,int $version,array $form): int {
@@ -146,7 +149,7 @@ function workloadPage(PDO $db,array $user,int $project,string $week,?int $select
         foreach (planningPeople($db,$u,$project) as $uid=>$name) if (roleAllows(projectRole($db,['id'=>$uid,'organization_id'=>$u['organization_id']],$project),'work')&&($manage||(int)$uid===(int)$u['id'])) $people[$uid]=$name;
     }
     $availability=[];
-    if ($people) foreach (query($db,'SELECT * FROM project_availability WHERE project_id=? AND week_on=?',[$project,$week])->fetchAll() as $r) if (isset($people[$r['user_id']])) $availability[$r['user_id']]=$r;
+    if ($people) foreach (query($db,'SELECT a.*,c.team_id FROM project_availability a LEFT JOIN capacity_teams c ON c.project_id=a.project_id AND c.user_id=a.user_id AND c.week_on=a.week_on WHERE a.project_id=? AND a.week_on=?',[$project,$week])->fetchAll() as $r) if (isset($people[$r['user_id']])) $availability[$r['user_id']]=$r;
     // Managers review all sheets; financial readers see only approved totals; workers see their own.
     $params=[$project,$week]; $where='s.project_id=? AND s.week_on=?';
     if (!$manage) { if ($work) { $where.=' AND (s.user_id=?'.($finance?" OR s.status='approved'":'').')'; $params[]=$u['id']; } else $where.=" AND s.status='approved'"; }
