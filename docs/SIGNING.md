@@ -44,3 +44,7 @@ WORKSPACE_SIGN_TEST_MODE=1
 Перед LIVE: test_mode=1, две контролируемые тестовые почты, проверить отправку и частичную подпись, отказ отдельного запроса, повторный callback, завершение и загрузку PDF с audit trail. Сравнить исходный SHA-256 и экспорт доказательств, восстановить backup, проверить доступ в другой организации и отозванные права. Проверить неудачную отправку и восстановление ID, отсутствие повторных писем. Убедиться, что архив помечен TEST. В новой согласованной редакции после приёмки можно использовать LIVE с отдельным подтверждением. Данная приёмка не выполняется автоматически в CI.
 
 API: https://developers.hellosign.com/api/signature-request/send ; https://developers.hellosign.com/api/signature-request ; https://developers.hellosign.com/docs/guides/events-and-callbacks/walkthrough ; https://help.dropbox.com/security/dropbox-sign-audit-trail-overview .
+
+## 1.6.3
+
+Скачивание единого реестра квитанций JSON с повторной проверкой метаданных сохранённых ответов и архивного состояния, явным TEST/LIVE и хешами callback. Регламент выделенного тестового контура: [JURISDICTION.md](JURISDICTION.md).

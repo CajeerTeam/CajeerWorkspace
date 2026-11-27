@@ -340,6 +340,8 @@ function handlePost(PDO $db, ?array $user): never {
             bookCommand($db,$user,$key,$act,$_POST);$_SESSION['notice']='Операция книги сохранена.';go('books',['entity'=>numberId($_POST['entity_id']??0)]);
         case 'accounting.init': case 'accounting.account': case 'accounting.period': case 'accounting.period_edit': case 'accounting.prepare': case 'accounting.approve': case 'accounting.post': case 'accounting.reverse': case 'accounting.close':
             accountingCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Бухгалтерская операция сохранена.'; go('accounting');
+        case 'tax.exchange': case 'tax.exchange.receipt':
+            $id=$act==='tax.exchange'?ukExchangeCreate($db,$user,$key,$_POST):ukExchangeReceipt($db,$user,$key,$_POST);$_SESSION['notice']='Выгрузка / решение сохранены.';go('tax');
         case 'tax.prepare': case 'tax.approve':
             ukProfileCommand($db,$user,$act,$_POST);$_SESSION['notice']='VAT-профиль сохранён.';go('tax');
         case 'invoice.entity':
@@ -618,10 +620,12 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'tax.print':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
             renderUkPrint(ukPrintData($db,$user,numberId($_GET['project']??0),numberId($_GET['id']??0),($_GET['credit']??'')==='1'));return;
+        case 'tax.exchange.download':
+            ukExchangeDownload($db,$user,numberId($_GET['id']??0),($_GET['receipt']??'')==='1');return;
         case 'tax': case 'tax.export':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
             $data=ukReport($db,$user,calendarDate($_GET['from']??substr(ukToday(),0,7).'-01'),calendarDate($_GET['to']??ukToday()));
-            if($page==='tax.export'){sendUkCsv($data);return;}break;
+            if($page==='tax.export'){sendUkCsv($data);return;}$data['exchangeBatches']=ukExchangePage($db,$user,optionalId($_GET['exchange_before']??''));break;
         case 'capacity':
             $data=capacityPage($db,$user,weekStart($_GET['week']??capacityCurrentWeek()));break;
         case 'project_management':

@@ -3,20 +3,21 @@ declare(strict_types=1);
 namespace Workspace;
 use PDO;
 
-const UK_VAT_RULE='UK-STD-2026-11-25';
+const UK_VAT_RULE='UK-STD-2026-11-25'; // Frozen calculation identity in migration 019
 function ukToday(): string {return (new \DateTimeImmutable('now',new \DateTimeZone('Europe/London')))->format('Y-m-d');}
 function ukVatNumber(mixed $raw): string {
     if(!is_string($raw))throw new Problem('Введите UK VAT registration number.');
     $v=preg_replace('/\s+/','',strtoupper(trim($raw)));if(str_starts_with($v,'GB'))$v=substr($v,2);
     if(!preg_match('/\A[0-9]{9}\z/',$v)||$v==='000000000')throw new Problem('Нужен девятизначный UK VAT number; проверка регистрации выполняется бухгалтером.');return $v;
 }
-function ukVatTotals(int $net): array {
+function ukVatTotals(int $net, ?string $ruleId=null): array {
+    $rule=ukRule($ruleId??ukRuleOn(ukToday()));
     if($net<1||$net>INVOICE_LIMIT)throw new Problem('Некорректная сумма без VAT.');
     // HMRC Notice 700 §17.5: round down total invoice VAT to a whole penny.
-    $vat=intdiv($net,5);$gross=$net+$vat;if($gross>INVOICE_LIMIT)throw new Problem('Сумма с VAT превышает лимит счёта.');return ['net'=>$net,'vat'=>$vat,'gross'=>$gross];
+    $vat=intdiv($net*$rule['rate_bps'],10000);$gross=$net+$vat;if($gross>INVOICE_LIMIT)throw new Problem('Сумма с VAT превышает лимит счёта.');return ['net'=>$net,'vat'=>$vat,'gross'=>$gross];
 }
 function ukProfile(PDO $db,int $entity): ?array {return query($db,'SELECT * FROM uk_vat_profiles WHERE entity_id=?',[$entity])->fetch()?:null;}
-function ukDocument(PDO $db,int $invoice): ?array {return query($db,'SELECT * FROM uk_vat_documents WHERE invoice_id=?',[$invoice])->fetch()?:null;}
+function ukDocument(PDO $db,int $invoice): ?array {$d=query($db,'SELECT d.*,r.rule_version AS package_rule_version FROM uk_vat_documents d LEFT JOIN uk_document_rules r ON r.invoice_id=d.invoice_id WHERE d.invoice_id=?',[$invoice])->fetch();return $d?ukResolveDocumentRule($d):null;}
 function ukProfileCommand(PDO $db,array $user,string $act,array $form): int {
     $id=numberId($form['entity_id']??0);$version=optionalId($form['version']??'')??0;
     return atomic($db,function()use($db,$user,$act,$form,$id,$version){
@@ -46,9 +47,9 @@ function ukIssue(PDO $db,array $i,array $seller,array $form,int $net,string $dat
     if((int)$p['version']!==numberId($form['uk_profile_version']??0))throw new Problem('VAT-профиль изменился. Обновите форму.',409);
     if($i['currency']!=='GBP')throw new Problem('UK VAT пакет поддерживает только GBP.');
     if(($form['uk_confirm']??'')!=='1'||($form['tax_point']??'')!==$date)throw new Problem('Подтвердите обычную внутреннюю B2B-услугу, поставленную сегодня, без авансов и скидок.');
-    $address=word($form['buyer_address']??'',500,'Адрес покупателя');$t=ukVatTotals($net);
+    $address=word($form['buyer_address']??'',500,'Адрес покупателя');$ruleId=ukRuleOn($date);$t=ukVatTotals($net,$ruleId);
     $snap=['vat_number'=>$p['vat_number'],'proprietor'=>$p['proprietor'],'contact'=>$p['contact'],'service_address'=>$p['service_address'],'effective_on'=>$p['effective_on'],'reviewed_until'=>$p['reviewed_until'],'approved_by'=>(int)$p['approved_by'],'approved_at'=>(int)$p['approved_at'],'review_reference'=>$p['review_reference']];
-    query($db,'INSERT INTO uk_vat_documents(invoice_id,profile_version,rule_version,tax_point,net_minor,vat_minor,gross_minor,buyer_address,profile_snapshot) VALUES(?,?,?,?,?,?,?,?,?)',[$i['id'],$p['version'],UK_VAT_RULE,$date,$t['net'],$t['vat'],$t['gross'],$address,json_encode($snap,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE)]);return $t;
+    query($db,'INSERT INTO uk_vat_documents(invoice_id,profile_version,rule_version,tax_point,net_minor,vat_minor,gross_minor,buyer_address,profile_snapshot) VALUES(?,?,?,?,?,?,?,?,?)',[$i['id'],$p['version'],UK_VAT_RULE,$date,$t['net'],$t['vat'],$t['gross'],$address,json_encode($snap,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE)]);query($db,'INSERT INTO uk_document_rules(invoice_id,rule_version) VALUES(?,?)',[$i['id'],$ruleId]);return $t;
 }
 function ukCredit(PDO $db,array $i,array $user,string $reason): void {
     $d=ukDocument($db,(int)$i['id']);if(!$d||$d['credit_on']!==null||$i['state']!=='issued')throw new Problem('Кредит-нота недоступна.',409);
@@ -59,10 +60,10 @@ function ukCredit(PDO $db,array $i,array $user,string $reason): void {
 }
 function ukReport(PDO $db,array $user,string $from,string $to): array {
     $u=accountingUser($db,$user);if($to<$from||$to>(new \DateTimeImmutable($from))->modify('+366 days')->format('Y-m-d'))throw new Problem('Период не более 367 дней.');
-    $org=(int)$u['organization_id'];$records=query($db,"SELECT i.*,d.* FROM uk_vat_documents d JOIN invoices i ON i.id=d.invoice_id WHERE i.organization_id=? AND ((d.tax_point BETWEEN ? AND ?) OR (d.credit_on BETWEEN ? AND ?)) ORDER BY i.id LIMIT 10001",[$org,$from,$to,$from,$to])->fetchAll();
+    $org=(int)$u['organization_id'];$records=query($db,"SELECT i.*,d.*,r.rule_version AS package_rule_version FROM uk_vat_documents d JOIN invoices i ON i.id=d.invoice_id LEFT JOIN uk_document_rules r ON r.invoice_id=d.invoice_id WHERE i.organization_id=? AND ((d.tax_point BETWEEN ? AND ?) OR (d.credit_on BETWEEN ? AND ?)) ORDER BY i.id LIMIT 10001",[$org,$from,$to,$from,$to])->fetchAll();
     if(count($records)>10000)throw new Problem('Сократите период отчёта.',422);
     $rows=[];$totals=[];
-    foreach($records as $r){foreach(['invoice'=>$r['tax_point'],'credit'=>$r['credit_on']] as $kind=>$date){if($date===null||$date<$from||$date>$to)continue;$sign=$kind==='credit'?-1:1;$r['kind']=$kind;$r['date']=$date;$r['doc_number']=($sign<0?'CN-':'').invoiceNumber($r);foreach(['net','vat','gross'] as $k){$r[$k]=$sign*(int)$r[$k.'_minor'];$eid=(int)$r['entity_id'];$totals[$eid][$k]=accountingAdd($totals[$eid][$k]??0,$r[$k]);}$rows[]=$r;}}
+    foreach($records as $r){$r=ukResolveDocumentRule($r);foreach(['invoice'=>$r['tax_point'],'credit'=>$r['credit_on']] as $kind=>$date){if($date===null||$date<$from||$date>$to)continue;$sign=$kind==='credit'?-1:1;$r['kind']=$kind;$r['date']=$date;$r['doc_number']=($sign<0?'CN-':'').invoiceNumber($r);foreach(['net','vat','gross'] as $k){$r[$k]=$sign*(int)$r[$k.'_minor'];$eid=(int)$r['entity_id'];$totals[$eid][$k]=accountingAdd($totals[$eid][$k]??0,$r[$k]);}$rows[]=$r;}}
     usort($rows,fn($a,$b)=>[$a['date'],$a['doc_number']]<=>[$b['date'],$b['doc_number']]);
     $profiles=query($db,'SELECT e.*,p.vat_number,p.proprietor,p.contact,p.service_address,p.effective_on,p.reviewed_until,p.approved_at,p.entity_version,p.version AS profile_version FROM legal_entities e LEFT JOIN uk_vat_profiles p ON p.entity_id=e.id WHERE e.organization_id=? ORDER BY e.id',[$org])->fetchAll();
     $legacy=(int)query($db,"SELECT COUNT(*) FROM invoices i LEFT JOIN uk_vat_documents d ON d.invoice_id=i.id WHERE i.organization_id=? AND i.issued_on BETWEEN ? AND ? AND d.invoice_id IS NULL",[$org,$from,$to])->fetchColumn();

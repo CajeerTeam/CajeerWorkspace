@@ -1,0 +1,22 @@
+-- Immutable, exact-byte accountant exchange batches; receipts are independent local decisions.
+CREATE TABLE uk_exchange_batches (
+ id INTEGER PRIMARY KEY, organization_id INTEGER NOT NULL, entity_id INTEGER NOT NULL,
+ from_on TEXT NOT NULL, to_on TEXT NOT NULL, format TEXT NOT NULL CHECK(format IN ('csv-v2','json-v1')),
+ payload_base64 TEXT NOT NULL CHECK(length(payload_base64)<=5592408), payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64),
+ byte_count INTEGER NOT NULL CHECK(byte_count BETWEEN 1 AND 4194304), created_by INTEGER NOT NULL REFERENCES users(id),
+ created_at INTEGER NOT NULL, request_key TEXT NOT NULL CHECK(length(request_key)=32),
+ UNIQUE(organization_id,created_by,request_key), UNIQUE(id,payload_sha256), FOREIGN KEY(organization_id,entity_id) REFERENCES legal_entities(organization_id,id), CHECK(from_on<=to_on)
+);
+CREATE INDEX uk_exchange_org_history ON uk_exchange_batches(organization_id,id);
+CREATE TABLE uk_exchange_receipts (
+ batch_id INTEGER PRIMARY KEY REFERENCES uk_exchange_batches(id), actor_id INTEGER NOT NULL REFERENCES users(id),
+ decision TEXT NOT NULL CHECK(decision IN ('accepted','rejected')), reference TEXT NOT NULL CHECK(length(reference) BETWEEN 1 AND 500),
+ payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64), request_key TEXT NOT NULL CHECK(length(request_key)=32), received_at INTEGER NOT NULL,
+ FOREIGN KEY(batch_id,payload_sha256) REFERENCES uk_exchange_batches(id,payload_sha256)
+);
+
+-- The frozen 019 calculation rule remains unchanged; record the implementation revision separately.
+CREATE TABLE uk_document_rules (
+ invoice_id INTEGER PRIMARY KEY REFERENCES uk_vat_documents(invoice_id),
+ rule_version TEXT NOT NULL CHECK(rule_version IN ('UK-STD-2026-11-25','UK-STD-2026-11-27'))
+);

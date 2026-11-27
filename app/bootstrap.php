@@ -10,6 +10,7 @@ require_once __DIR__ . '/Permissions.php';
 require_once __DIR__ . '/Payments.php';
 require_once __DIR__ . '/Invoices.php';
 require_once __DIR__ . '/TaxUk.php';
+require_once __DIR__ . '/Jurisdiction.php';
 require_once __DIR__ . '/Accounting.php';
 require_once __DIR__ . '/Banking.php';
 require_once __DIR__ . '/Economics.php';
