@@ -59,7 +59,7 @@ function accountingPairs(array $accounts,mixed $raw): array {
         if(trim($line)==='')continue;
         $parts=preg_split('/\s+/',trim($line));if(count($parts)!==4||count($pairs)>=100)throw new Problem('Одна строка: валюта дебет кредит сумма; максимум 100 строк.');
         [$currency,$debit,$credit,$amount]=$parts;choice($currency,array_flip(CURRENCIES));
-        if(!isset($map[$debit],$map[$credit])||$debit===$credit||!in_array($map[$debit]['kind'],['asset','liability','equity'],true)||!in_array($map[$credit]['kind'],['asset','liability','equity'],true))throw new Problem('Начальные остатки допускают только разные балансовые счета.');
+        if(isset(BOOK_AP_ACCOUNTS[$debit])||isset(BOOK_AP_ACCOUNTS[$credit])||!isset($map[$debit],$map[$credit])||$debit===$credit||!in_array($map[$debit]['kind'],['asset','liability','equity'],true)||!in_array($map[$credit]['kind'],['asset','liability','equity'],true))throw new Problem('Начальные остатки допускают только разные балансовые счета.');
         $pairs[]=['currency'=>$currency,'debit'=>(int)$map[$debit]['id'],'credit'=>(int)$map[$credit]['id'],'amount'=>moneyMinor($amount)];
     }
     return $pairs;
@@ -71,14 +71,15 @@ function accountingExpected(array $accounts,array $snapshot,array $pairs,array $
     foreach(CURRENCIES as $c)if($actual[$c]!==$expected[$c])throw new Problem('Остаток денежных средств не сходится: '.$c.'. Проверьте выписку и начальные проводки.',409);
 }
 function accountingInsert(PDO $db,int $org,int $period,?int $project,string $date,string $currency,int $debit,int $credit,int $amount,string $kind,string $memo,int $actor,?int $cash=null,?int $reverse=null): int {
+    if($project!==null)bookCheckDate($db,$project,$date);
     return insertId($db,'INSERT INTO accounting_entries(organization_id,period_id,project_id,booked_on,currency,debit_id,credit_id,amount_minor,kind,memo,actor_id,created_at,cash_id,reversal_of) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[$org,$period,$project,$date,$currency,$debit,$credit,$amount,$kind,$memo,$actor,time(),$cash,$reverse]);
 }
 // Called inside the cash transaction, never opens a second transaction.
-function accountingCashEntry(PDO $db,int $id,bool $import=false): void {
+function accountingCashEntry(PDO $db,int $id,bool $import=false,?int $supplierAccount=null): void {
     $r=entity($db,'SELECT e.*,p.organization_id FROM cash_entries e JOIN projects p ON p.id=e.project_id WHERE e.id=?',[$id]);$org=(int)$r['organization_id'];
     if(!$import&&!accountingActive($db,$org))return;
     $period=accountingPeriod($db,$org,$r['booked_on']);$accounts=array_column(accountingAccounts($db,$org),'id','code');
-    $cash=(int)$accounts['1000'];$opposite=(int)$accounts[$r['direction']==='income'?'4000':'5000'];$debit=$r['direction']==='income'?$cash:$opposite;$credit=$r['direction']==='income'?$opposite:$cash;$reverse=null;$amount=(int)$r['amount_minor'];
+    $cash=(int)$accounts['1000'];$opposite=$supplierAccount??(int)$accounts[$r['direction']==='income'?'4000':'5000'];$debit=$r['direction']==='income'?$cash:$opposite;$credit=$r['direction']==='income'?$opposite:$cash;$reverse=null;$amount=(int)$r['amount_minor'];
     if($r['reversal_of']!==null){
         $old=entity($db,"SELECT * FROM accounting_entries WHERE organization_id=? AND cash_id=? AND kind='cash'",[$org,$r['reversal_of']]);
         if($amount!==-(int)$old['amount_minor']||$r['currency']!==$old['currency']||(int)$r['project_id']!==(int)$old['project_id'])throw new Problem('Сторно кассы не соответствует исходной проводке.',409);
@@ -88,7 +89,7 @@ function accountingCashEntry(PDO $db,int $id,bool $import=false): void {
 }
 function accountingCheckCashDate(PDO $db,int $project,string $date): void {
     $org=(int)entity($db,'SELECT organization_id FROM projects WHERE id=?',[$project])['organization_id'];
-    if(accountingActive($db,$org))accountingPeriod($db,$org,$date);
+    if(accountingActive($db,$org))accountingPeriod($db,$org,$date);bookCheckDate($db,$project,$date);
 }
 function accountingReconcile(PDO $db,int $org): array {
     $snapshot=accountingCashSnapshot($db,$org);$cash=(int)array_column(accountingAccounts($db,$org),'id','code')['1000'];
@@ -114,7 +115,7 @@ function accountingCommand(PDO $db,array $user,string $key,string $act,array $fo
         $active=accountingActive($db,$org);$id=$org;
         if($act==='accounting.init')accountingSeed($db,$org);
         elseif($act==='accounting.account'){
-            accountingSeed($db,$org);$code=word($f['code'],20,'Код');if(!preg_match('/\A[A-Z0-9][A-Z0-9.-]{0,19}\z/',$code))throw new Problem('Код счёта: A-Z, цифры, точка, дефис.');
+            accountingSeed($db,$org);$code=word($f['code'],20,'Код');if(isset(BOOK_AP_ACCOUNTS[$code]))throw new Problem('Код зарезервирован для обязательств поставщиков.');if(!preg_match('/\A[A-Z0-9][A-Z0-9.-]{0,19}\z/',$code))throw new Problem('Код счёта: A-Z, цифры, точка, дефис.');
             if(query($db,'SELECT 1 FROM accounting_accounts WHERE organization_id=? AND code=?',[$org,$code])->fetchColumn())throw new Problem('Код уже существует.',409);
             $id=insertId($db,'INSERT INTO accounting_accounts(organization_id,code,name,kind) VALUES(?,?,?,?)',[$org,$code,word($f['name'],180,'Название'),choice($f['kind'],ACCOUNT_KINDS)]);
         }elseif($act==='accounting.period'){
@@ -164,12 +165,12 @@ function accountingCommand(PDO $db,array $user,string $key,string $act,array $fo
                 $date=calendarDate($f['booked_on']);if($date>gmdate('Y-m-d'))throw new Problem('Проводка не может иметь будущую дату.');$period=accountingPeriod($db,$org,$date);$memo=word($f['memo'],500,'Основание');
                 if($act==='accounting.post'){
                     $debit=numberId($f['debit']);$credit=numberId($f['credit']);$accounts=array_column(accountingAccounts($db,$org),null,'id');
-                    if($debit===$credit||!isset($accounts[$debit],$accounts[$credit])||$accounts[$debit]['code']==='1000'||$accounts[$credit]['code']==='1000')throw new Problem('Выберите разные счета организации; денежный счёт изменяется только через кассу.');
+                    if($debit===$credit||!isset($accounts[$debit],$accounts[$credit])||in_array($accounts[$debit]['code'],['1000',...array_keys(BOOK_AP_ACCOUNTS)],true)||in_array($accounts[$credit]['code'],['1000',...array_keys(BOOK_AP_ACCOUNTS)],true))throw new Problem('Выберите разные счета организации; денежный счёт изменяется только через кассу.');
                     $project=$f['project_id']===''?null:numberId($f['project_id']);if($project!==null)requireProjectRight($db,$u,$project,'finance');
                     $id=accountingInsert($db,$org,(int)$period['id'],$project,$date,choice($f['currency'],array_flip(CURRENCIES)),$debit,$credit,moneyMinor($f['amount']),'manual',$memo,$actor);
                 }else{
                     $original=numberId($f['id']);$r=entity($db,'SELECT * FROM accounting_entries WHERE organization_id=? AND id=?',[$org,$original]);
-                    if($r['kind']!=='manual'||$date<$r['booked_on']||query($db,'SELECT 1 FROM accounting_entries WHERE reversal_of=?',[$original])->fetchColumn())throw new Problem('Разрешено однократное сторно ручной проводки; кассовое сторно оформляется через кассу.',409);
+                    if(query($db,'SELECT 1 FROM supplier_bills WHERE entry_id=?',[$original])->fetchColumn()||$r['kind']!=='manual'||$date<$r['booked_on']||query($db,'SELECT 1 FROM accounting_entries WHERE reversal_of=?',[$original])->fetchColumn())throw new Problem('Разрешено однократное сторно ручной проводки; кассовое сторно оформляется через кассу.',409);
                     $id=accountingInsert($db,$org,(int)$period['id'],$r['project_id']===null?null:(int)$r['project_id'],$date,$r['currency'],(int)$r['credit_id'],(int)$r['debit_id'],(int)$r['amount_minor'],'reversal',$memo,$actor,null,$original);
                 }
             }

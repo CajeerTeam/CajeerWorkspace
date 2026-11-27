@@ -39,7 +39,7 @@ function invoiceCreate(PDO $db,array $user,int $project,string $key,array $form)
     $entity=numberId($form['entity_id']??0);$client=numberId($form['counterparty_id']??0);$currency=choice($form['currency']??'',array_flip(CURRENCIES));$due=calendarDate($form['due_on']??'');$terms=word($form['terms']??'',1000,'Условия оплаты');
     return action($db,$u,$key,'invoice.create',[$project,$entity,$client,$currency,$due,$terms],function()use($db,$u,$project,$entity,$client,$currency,$due,$terms){
         requireProjectRight($db,$u,$project,'payment.create');$org=$u['organization_id'];
-        entity($db,'SELECT id FROM legal_entities WHERE id=? AND organization_id=?',[$entity,$org]);
+        entity($db,'SELECT id FROM legal_entities WHERE id=? AND organization_id=?',[$entity,$org]);bookCheckEntity($db,$project,$entity);
         if(!array_key_exists($client,array_column(invoiceCounterparties($db,$u,$project),'name','id')))throw new Problem('Контрагент недоступен для проекта.',403);
         return insertId($db,'INSERT INTO invoices(organization_id,project_id,entity_id,counterparty_id,currency,due_on,terms,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',[$org,$project,$entity,$client,$currency,$due,$terms,$u['id'],time()]);
     });

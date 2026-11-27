@@ -63,7 +63,7 @@ function contractCommand(PDO $db,array $user,int $p,string $key,string $act,arra
             $ref=word($f['reference'],120,'Номер договора');$seller=numberId($f['entity_id']);$buyer=numberId($f['counterparty_id']);
             entity($db,'SELECT id FROM legal_entities WHERE organization_id=? AND id=?',[$org,$seller]);entity($db,'SELECT id FROM counterparties WHERE organization_id=? AND id=?',[$org,$buyer]);
             if(query($db,'SELECT 1 FROM contracts WHERE organization_id=? AND reference=?',[$org,$ref])->fetchColumn())throw new Problem('Номер договора уже используется.',409);
-            $id=insertId($db,'INSERT INTO contracts(organization_id,project_id,entity_id,counterparty_id,reference,created_by,created_at) VALUES(?,?,?,?,?,?,?)',[$org,$p,$seller,$buyer,$ref,$actor,time()]);
+            bookCheckEntity($db,$p,$seller);$id=insertId($db,'INSERT INTO contracts(organization_id,project_id,entity_id,counterparty_id,reference,created_by,created_at) VALUES(?,?,?,?,?,?,?)',[$org,$p,$seller,$buyer,$ref,$actor,time()]);
             contractRevision($db,contractGet($db,$u,$p,$id,'legal.write'),$f,$actor,1);return $id;
         }
         $id=numberId($f['id']);$c=contractGet($db,$u,$p,$id,'legal.write');

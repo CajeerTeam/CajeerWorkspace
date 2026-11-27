@@ -25,7 +25,7 @@ class Updates(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory(); cls.addClassCleanup(cls.tmp.cleanup)
         cls.base=Path(cls.tmp.name); cls.previous=release.build(cls.base/'previous')
-        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.5.4'; cls.schema=46
+        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.6.1'; cls.schema=47
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub';
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',str(cls.key)],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',str(cls.key),'-pubout','-out',str(cls.pub)],check=True,capture_output=True)
@@ -34,7 +34,7 @@ class Updates(unittest.TestCase):
         matrix=json.loads(cls.files['config/compatibility.json']);matrix['version']=cls.version;cls.files['config/compatibility.json']=json.dumps(matrix).encode()
         cls.target=cls.base/f'CajeerWorkspace-{cls.version}.zip';cls.make_zip(cls.target,cls.files)
         cls.signature=cls.base/'package.sig';cls.sign(cls.target,cls.signature)
-        cls.metadata={'repository':u.REPO,'version':cls.version,'tag':'v'+cls.version,'channel':'stable','schema':46,'release_key_sha256':release.file_sha(cls.pub), 'matrix_sha256':release.sha(cls.files['config/compatibility.json']),'package':{'name':cls.target.name,'size':cls.target.stat().st_size,'sha256':release.file_sha(cls.target),'signature_sha256':release.file_sha(cls.signature)},'supported_from':[{'version':cls.current,'schema':46,'archive_sha256':release.file_sha(cls.previous)}],'runtime':{k:matrix['runtime'][k] for k in ('php_min','sqlite_min','postgres_min','python_min','architecture')}}
+        cls.metadata={'repository':u.REPO,'version':cls.version,'tag':'v'+cls.version,'channel':'stable','schema':47,'release_key_sha256':release.file_sha(cls.pub), 'matrix_sha256':release.sha(cls.files['config/compatibility.json']),'package':{'name':cls.target.name,'size':cls.target.stat().st_size,'sha256':release.file_sha(cls.target),'signature_sha256':release.file_sha(cls.signature)},'supported_from':[{'version':cls.current,'schema':47,'archive_sha256':release.file_sha(cls.previous)}],'runtime':{k:matrix['runtime'][k] for k in ('php_min','sqlite_min','postgres_min','python_min','architecture')}}
 
     @classmethod
     def make_zip(cls,path,files):
@@ -53,7 +53,7 @@ class Updates(unittest.TestCase):
 
     def envelope(self):
         path=self.path/'metadata';path.write_text(json.dumps(self.meta,separators=(',',':'),sort_keys=True));sig=self.path/'metadata.sig';self.sign(path,sig)
-        return {'metadata':base64.b64encode(path.read_bytes()).decode(),'signature':base64.b64encode(sig.read_bytes()).decode(),'key':base64.b64encode(self.pub.read_bytes()).decode(),'signature_size':self.sig.stat().st_size,'environment':{'version':self.current,'schema':46}}
+        return {'metadata':base64.b64encode(path.read_bytes()).decode(),'signature':base64.b64encode(sig.read_bytes()).decode(),'key':base64.b64encode(self.pub.read_bytes()).decode(),'signature_size':self.sig.stat().st_size,'environment':{'version':self.current,'schema':47}}
 
     def fetch(self,url,dest,size,digest):
         self.calls.append(url);src=self.sig if url.endswith('.sig') else self.archive
