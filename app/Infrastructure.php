@@ -140,7 +140,7 @@ function infraChange(PDO $db,array $user,int $project,string $act,array $in): vo
             query($db,'INSERT INTO infra_environments(organization_id,project_id,kind,name) VALUES(?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET name=excluded.name',[$org,$project,$kind,$name]); auditEvent($db,$u,$project,$act,$project,$kind); return;
         }
         if($act==='infra.detach'){
-            $site=numberId($in['site_id']??null); entity($db,'SELECT id FROM infra_sites WHERE id=? AND project_id=? AND organization_id=?',[$site,$project,$org]); if(query($db,'SELECT 1 FROM deployments WHERE site_id=?',[$site])->fetchColumn()) throw new Problem('Привязка имеет историю развёртываний и не может быть удалена.',409); query($db,'DELETE FROM infra_sites WHERE id=?',[$site]); auditEvent($db,$u,$project,$act,$site); return;
+            $site=numberId($in['site_id']??null); entity($db,'SELECT id FROM infra_sites WHERE id=? AND project_id=? AND organization_id=?',[$site,$project,$org]); if(query($db,'SELECT 1 FROM deployments WHERE site_id=?',[$site])->fetchColumn()) throw new Problem('Привязка имеет историю развёртываний и не может быть удалена.',409); if(query($db,'SELECT 1 FROM ops_services WHERE site_id=?',[$site])->fetchColumn())throw new Problem('Сайт зарегистрирован как сервис эксплуатации; история сохраняется.',409); query($db,'DELETE FROM infra_sites WHERE id=?',[$site]); auditEvent($db,$u,$project,$act,$site); return;
         }
         $hid=numberId($in['host_id']??null); $host=infraHost($db,$u,$hid);
         if($act==='infra.owner'){
