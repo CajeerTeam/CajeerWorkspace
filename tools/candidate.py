@@ -15,8 +15,8 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.7.1', '1.7.2'
-OLD_SCHEMA, SCHEMA = 50, 51
+OLD, NEW = '1.7.2', '1.8.0'
+OLD_SCHEMA, SCHEMA = 51, 51
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
 
@@ -195,13 +195,8 @@ def old_snapshot(folder, backend, data, objects, env):
 
 
 def migrated_matches(before, after):
-    # 051 only adds empty tables (without identity sequences); all existing business rows must be unchanged.
-    if before['schema']!=OLD_SCHEMA or after['schema']!=SCHEMA: return False
-    if any(recovery.canonical(before[k])!=recovery.canonical(after[k]) for k in ('cash','ledger','objects','sequences')): return False
-    old=before['tables'];new=after['tables'];added={'bots_support_links','bots_feedback'}
-    if set(new)-set(old)!=added or set(old)-set(new): return False
-    if new['schema_migrations']['rows']!=SCHEMA or old['schema_migrations']['rows']!=OLD_SCHEMA:return False
-    return all(old[k]==new[k] for k in old if k!='schema_migrations') and all(new[k]['rows']==0 and new[k]['sha256']==recovery.sha(b'') for k in added)
+    # No schema change: every business row, sequence, and object must be identical.
+    return before['schema']==OLD_SCHEMA and after['schema']==SCHEMA and recovery.canonical(before)==recovery.canonical(after)
 
 
 def smoke(folder, version, env, upgrade=False):
@@ -248,7 +243,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         if target==OLD:
             # Rollback requires the exact pre-upgrade schema and state.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 50 using 1.7.1 recovery tools') from exc
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 51 using 1.7.2 recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')

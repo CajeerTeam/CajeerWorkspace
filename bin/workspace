@@ -97,6 +97,8 @@ CajeerWorkspace PHP $version
   php bin/workspace incidents:scan PROJECT_ID OWNER_ID
   php bin/workspace logs:prune
   php bin/workspace pilot:seed OWNER_ID < private-input.json
+  php bin/workspace pilot:boundary OWNER_ID < private-second.json
+  php bin/workspace pilot:cycle OWNER_ID < cycle-ids.json
   php bin/workspace pilot:guest OWNER_ID DOCUMENT_ID REVISION HOURS [ORDER_ID] < email.txt
   php bin/workspace pilot:check OWNER_ID
   php bin/workspace pilot:probe OWNER_ID
@@ -214,13 +216,17 @@ try {
         case 'auth:policy':
             if ($argc!==2) throw new Problem('Формат: auth:policy');
             $report=authPolicyReport($db); echo json_encode($report,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; exit($report['ok']?0:1);
+        case 'pilot:boundary':
+        case 'pilot:cycle':
         case 'pilot:seed':
-            if ($argc!==3) throw new Problem('Формат: pilot:seed OWNER_ID < JSON');
+            if ($argc!==3) throw new Problem('Формат: '.$command.' OWNER_ID < JSON');
             $raw=stream_get_contents(STDIN,32769);
             if ($raw===false||strlen($raw)>32768) throw new Problem('Pilot: JSON до 32 КиБ.');
             try { $input=json_decode($raw,true,16,JSON_THROW_ON_ERROR); } catch (\JsonException) { throw new Problem('Pilot: некорректный JSON.'); }
             if (!is_array($input)) throw new Problem('Pilot: ожидается JSON-объект.');
-            echo json_encode(pilotSeed($db,numberId($argv[2]),$input),JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL; break;
+             $result=match($command){'pilot:boundary'=>pilotBoundarySeed($db,numberId($argv[2]),$input),'pilot:cycle'=>pilotCycle($db,numberId($argv[2]),$input),default=>pilotSeed($db,numberId($argv[2]),$input)};
+            echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
+            if($command==='pilot:cycle')exit($result['status']==='passed'?0:1);break;
         case 'pilot:guest':
             if ($argc!==6 && $argc!==7) throw new Problem('Формат: pilot:guest OWNER_ID DOCUMENT_ID REVISION HOURS [ORDER_ID] < email.txt');
             $email=stream_get_contents(STDIN,1025);

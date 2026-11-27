@@ -120,7 +120,9 @@ function pilotCheck(PDO $db,int $ownerId): array {
         $projects[$r['kind']]=(int)$r['id'];
     }
     if (count($projects)!==3 || array_diff(['internal','client','oss'],array_keys($projects))) throw new Problem('Pilot: ожидаются три проекта стенда.',409);
-    if ((int)$db->query('SELECT COUNT(*) FROM organizations')->fetchColumn()!==1) $issues[]='not_isolated';
+    // A second independent control tenant is allowed only if provisioned by pilot:boundary.
+    $orgCount=(int)$db->query('SELECT COUNT(*) FROM organizations')->fetchColumn();
+    if ($orgCount!==1 && ($orgCount!==2 || (int)$db->query("SELECT COUNT(*) FROM audit_events WHERE event='pilot.boundary' AND organization_id<>1")->fetchColumn()!==1)) $issues[]='not_isolated';
     // The seed records slot assignments, not credentials; re-evaluate roles using the normal RBAC.
     $staff=[]; $seen=[];
     foreach (query($db,"SELECT object_id,detail FROM audit_events WHERE organization_id=1 AND event='pilot.staff' ORDER BY id",[])->fetchAll() as $r) {
@@ -148,7 +150,7 @@ function pilotCheck(PDO $db,int $ownerId): array {
         $actual=array_map('intval',query($db,'SELECT user_id FROM team_members WHERE team_id=?',[$teams[$name]])->fetchAll(PDO::FETCH_COLUMN));
         sort($expected); sort($actual); if ($expected!==$actual) $issues[]='team_membership';
     }
-    if ((int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn()!==count(PILOT_STAFF)+1) $issues[]='unexpected_staff';
+    if ((int)$db->query('SELECT COUNT(*) FROM organization_members WHERE organization_id=1')->fetchColumn()!==count(PILOT_STAFF)+1) $issues[]='unexpected_staff';
     foreach (PILOT_CONNECTIONS as $type=>$kinds) {
         $key=$catalog[$type]['id'];
         if (!query($db,"SELECT 1 FROM audit_events WHERE organization_id=1 AND event='pilot.target' AND detail=?",[$key.':'.$catalog[$type]['hash']])->fetchColumn()) $issues[]=$type.':target_changed';
@@ -165,7 +167,7 @@ function pilotCheck(PDO $db,int $ownerId): array {
             try { retentionDocumentBytes($db,(int)$g['document_id'],(int)$g['revision']); $guests[]=(int)$r['id']; } catch (Problem) { $issues[]='guest_document_unavailable'; }
         }
     }
-    return ['version'=>VERSION,'schema'=>SCHEMA_VERSION,'checked_at'=>gmdate(DATE_ATOM),'projects'=>$projects,'staff'=>$staff,'teams'=>$teams,'guest_active_ids'=>$guests,'issues'=>$issues,'topology_ready'=>$issues===[],'guest_ready'=>$guests!==[]];
+    return ['version'=>VERSION,'schema'=>SCHEMA_VERSION,'owner_id'=>$ownerId,'checked_at'=>gmdate(DATE_ATOM),'projects'=>$projects,'staff'=>$staff,'teams'=>$teams,'guest_active_ids'=>$guests,'issues'=>$issues,'topology_ready'=>$issues===[],'guest_ready'=>$guests!==[]];
 }
 
 /** Issue the real OIDC guest invitation for the pilot client project. No synthetic identity. */

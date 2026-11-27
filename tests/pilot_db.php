@@ -61,6 +61,14 @@ try {
     pilotExpect($guest['user']===null&&pilotCheck($db,1)['guest_ready'],'guest scoped accepted');
     pilotReject(fn()=>atomic($db,fn()=>oidcPrincipal($db,['sub'=>'fixture-guest','email'=>'guest@example.test','email_verified'=>true],hash('sha256',$token))),404);
     pilotExpect(retentionDocumentBytes($db,$doc,1)===$pdf,'guest pinned bytes');
+    $second=['email'=>'boundary@example.test','name'=>'Independent owner','password'=>'boundary-only-'.bin2hex(random_bytes(16)),'organization'=>'Boundary org','project'=>'Boundary project'];
+    $b=pilotBoundarySeed($db,1,$second);$top=pilotCheck($db,1);pilotExpect($top['topology_ready'],'two tenant topology');
+    $boundary=pilotBoundary($db,1,$top);pilotExpect($boundary['boundary']===$b,'boundary identity');
+    pilotExpect(count($boundary['matrix'])===240&&!in_array(false,$boundary['matrix'],true),'matrix exercised');
+    pilotExpect(count($boundary['checks'])===20&&!in_array(false,$boundary['checks'],true),'tenant boundary exercised');
+    pilotExpect((int)authenticate($db,$second['email'],$second['password'],'127.0.0.1')['id']===$b['owner_id'],'independent login');
+    pilotReject(fn()=>pilotBoundarySeed($db,1,$second),409);
+    pilotReject(fn()=>pilotCycle($db,1,array_combine(CYCLE_IDS,range(900001,900013))),404);
     revokeGuest($db,$u,$p['client'],$guest['guest']); pilotExpect(!pilotCheck($db,1)['guest_ready'],'revoked guest not active');
     changeMembership($db,$u,'project',$p['internal'],$s['developer'],false); pilotExpect(!pilotCheck($db,1)['topology_ready'],'revoked membership detected');
     echo "OK · $n pilot checks\n";

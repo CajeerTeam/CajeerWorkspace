@@ -48,6 +48,7 @@ require_once __DIR__ . '/Incidents.php';
 require_once __DIR__ . '/Discovery.php';
 require_once __DIR__ . '/Reliability.php';
 require_once __DIR__ . '/Pilot.php';
+require_once __DIR__ . '/FullCycle.php';
 require_once __DIR__ . '/Recovery.php';
 require_once __DIR__ . '/WorkspaceUpdates.php';
 require_once __DIR__ . '/Assistant.php';

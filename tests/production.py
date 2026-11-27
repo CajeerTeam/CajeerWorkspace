@@ -36,7 +36,7 @@ class ProductionTests(unittest.TestCase):
     def setUp(self):
         self.tmp2=tempfile.TemporaryDirectory(dir=self.base);self.addCleanup(self.tmp2.cleanup);self.root=Path(self.tmp2.name);self.evidence=self.root/'evidence';self.evidence.mkdir(mode=0o700)
         now=dt.datetime.now(dt.timezone.utc).isoformat();m=self.matrix
-        t={'version':prod.VERSION,'schema':51,'topology_ready':True,'guest_ready':True,'issues':[],'projects':{'internal':1,'client':2,'oss':3},'staff':{str(i):i for i in range(8)},'teams':{'a':1,'b':2},'guest_active_ids':[1],'checked_at':now}
+        t={'version':prod.VERSION,'schema':51,'owner_id':1,'topology_ready':True,'guest_ready':True,'issues':[],'projects':{'internal':1,'client':2,'oss':3},'staff':{str(i):i for i in range(8)},'teams':{'a':1,'b':2},'guest_active_ids':[1],'checked_at':now}
         p={'version':prod.VERSION,'mode':'live_readiness','ready':True,'connections':{}}
         v={'version':prod.VERSION,'archive_sha256':recovery.digest(self.archive),'previous_sha256':self.prev,'checked_at':now,'stand':'Synthetic test fixture','tax_profile':'management_cash_only','signature_provider':'dropbox_sign_v3','backend':'sqlite','php_version':'8.4.24','database_version':'3.40.1','owners':{name:'Test operator '+name for name in ('workspace','release','security','database','finance','legal',*m['integrations'])},'integrations':{},'scenarios':{k:{'passed':True,'evidence_ref':'synthetic scenario'} for k in prod.SCENARIOS},'checks':{k:{'passed':True,'evidence_ref':'synthetic check'} for k in prod.CHECKS},'ci':{'run':'synthetic-run','commit':'b'*40,'jobs':{k:'success' for k in prod.CI}},'thresholds':{'minimum_requests':100,'minimum_concurrency':5,'p95_ms':100,'error_rate':0,'rto_seconds':60,'rpo_seconds':300},'open_critical_defects':0}
         for k,s in m['integrations'].items():
@@ -49,7 +49,8 @@ class ProductionTests(unittest.TestCase):
         sample={'requests':100,'success':100,'errors':{},'p95_ms':15,'error_rate':0}
         l={'status':'passed','requests':100,'concurrency':5,'total':sample,'routes':{'overview':copy.deepcopy(sample)}}
         r={'status':'restored_verified_offline','backend':'sqlite','cash_balances_match':True,'ledger_balances_match':True,'scope_and_queue_snapshot_match':True,'quarantined':True,'service_ready':False,'manifest_sha256':'d'*64,'outage_to_verified_restore_seconds':25,'backup_age_at_outage_seconds':20}
-        self.data=dict(zip(prod.REPORTS,(t,p,l,r,v)))
+        c={'version':prod.VERSION,'schema':51,'mode':'persisted_cycle','status':'passed','checked_at':now,'projects':t['projects'],'owner_id':1,'boundary':{'organization_id':2,'owner_id':10,'project_id':4,'task_id':99},'checks':{k:True for k in prod.CYCLE_CHECKS},'boundary_checks':{k:True for k in prod.CYCLE_BOUNDARY},'role_checks':{f'{s}:{p}:{r}':True for s in prod.CYCLE_STAFF for p in prod.CYCLE_PROJECTS for r in prod.CYCLE_RIGHTS},'ids':{k:i for i,k in enumerate(prod.CYCLE_IDS,1)},'proof':{k:'a'*(40 if k.endswith('_release_sha') else 64) for k in prod.CYCLE_PROOF},'code_sha256':recovery.digest(ROOT/'app/FullCycle.php')}
+        self.data=dict(zip(prod.REPORTS,(t,p,l,r,v,c)))
 
     def reports(self):return {n:recovery.canonical(x) for n,x in self.data.items()}
     def assemble(self):
@@ -143,7 +144,7 @@ class ProductionTests(unittest.TestCase):
 
     def test_expired_review_blocks_publish(self):
         old=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=8)).isoformat()
-        self.data['review.json']['checked_at']=self.data['topology.json']['checked_at']=old
+        self.data['review.json']['checked_at']=self.data['topology.json']['checked_at']=self.data['cycle.json']['checked_at']=old
         for r in self.data['readiness.json']['connections'].values():r['checked_at']=old
         self.assemble();self.sign_all()
         with self.assertRaises(ValueError):self.publish()
@@ -175,6 +176,17 @@ class ProductionTests(unittest.TestCase):
                 self.data[name][key]=old
         self.data['review.json']['integrations']['bots']['capabilities']['workspace_delivery_v1']=False
         with self.assertRaises(ValueError):prod.statement(self.archive,self.prev,self.reports(),self.pin)
+    def test_full_cycle_gate(self):
+        good=copy.deepcopy(self.data['cycle.json'])
+        for field,key,value in [('checks','editorial_lite',False),('boundary','owner_id',1),('role_checks','developer:client:finance',False),('ids','failed_job',good['ids']['staging_job']),('proof','failed_release_sha','b'*40)]:
+            with self.subTest(field=field,key=key):
+                self.data['cycle.json']=copy.deepcopy(good);self.data['cycle.json'][field][key]=value
+                with self.assertRaises(ValueError):prod.statement(self.archive,self.prev,self.reports(),self.pin)
+        self.data['cycle.json']=copy.deepcopy(good);self.data['cycle.json']['code_sha256']='0'*64
+        with self.assertRaises(ValueError):prod.statement(self.archive,self.prev,self.reports(),self.pin)
+        self.data['cycle.json']=copy.deepcopy(good);del self.data['cycle.json']['role_checks']['operator:oss:operations']
+        with self.assertRaises(ValueError):prod.statement(self.archive,self.prev,self.reports(),self.pin)
+
     def test_incompatible_version_target_and_ci(self):
         v=self.data['review.json'];p=self.data['readiness.json']['connections'];p['engine']['observed_version']='3.0.0';p['engine']['declared_version']='3.0.0';v['integrations']['engine']['version']='3.0.0'
         with self.assertRaises(ValueError):prod.statement(self.archive,self.prev,self.reports(),self.pin)

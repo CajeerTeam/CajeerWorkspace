@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.7.1 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.7.2 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -76,7 +76,6 @@ class CandidateTests(unittest.TestCase):
         import copy
         before={'schema':candidate.OLD_SCHEMA,'cash':[],'ledger':[],'objects':[],'sequences':{'old_id_seq':{'last_value':3,'is_called':True}},'tables':{'schema_migrations':{'rows':candidate.OLD_SCHEMA},'old':{'rows':2,'sha256':'a'*64}}}
         after=copy.deepcopy(before);after['schema']=candidate.SCHEMA;after['tables']['schema_migrations']['rows']=candidate.SCHEMA
-        for name in ('bots_support_links','bots_feedback'):after['tables'][name]={'rows':0,'sha256':recovery.sha(b'')}
         self.assertTrue(candidate.migrated_matches(before,after))
         after['sequences']['old_id_seq']['last_value']=4
         self.assertFalse(candidate.migrated_matches(before,after))
@@ -101,8 +100,6 @@ class CandidateTests(unittest.TestCase):
         def smoke(folder,version,env,upgrade=False):
             with closing(sqlite3.connect(db)) as c, c:
                 current=c.execute('PRAGMA user_version').fetchone()[0]
-                if version==candidate.NEW and upgrade and current==candidate.OLD_SCHEMA:
-                    migration=ROOT/'database/051.sql';c.executescript(migration.read_text());c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(51,recovery.digest(migration),'applied'));c.execute('PRAGMA user_version=51')
                 self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0],candidate.SCHEMA if version==candidate.NEW else candidate.OLD_SCHEMA)
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=smoke):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)

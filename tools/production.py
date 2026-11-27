@@ -17,9 +17,9 @@ import release
 
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
-REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json')
-VERSION = '1.7.2'
-PREVIOUS = '1.7.1'
+REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json', 'cycle.json')
+VERSION = '1.8.0'
+PREVIOUS = '1.7.2'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
 CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy', 'assistant_confirmed_drafts', 'team_lead_review', 'team_lead_decisions', 'team_lead_dependencies', 'oss_release_lines', 'oss_backport_changelog', 'oss_contributor_notifications', 'service_operations', 'owner_portfolio', 'budget_versions', 'collection_forecast', 'team_capacity', 'capacity_substitution', 'queue_forecast', 'freelance_package', 'freelance_advance_and_recurring', 'freelance_client_acceptance', 'entity_books', 'supplier_accruals', 'supplier_payments_and_refunds', 'bank_format_versions', 'bank_independent_review', 'bank_closing_export', 'contract_signer_authority', 'contract_terms_revision', 'contract_deadline_tasks', 'jurisdiction_rule_versions', 'jurisdiction_exchange_receipts', 'sign_test_live_isolation', 'release_trace_identity', 'release_trace_logs', 'release_trace_incident', 'editorial_versioned_compare', 'editorial_revocation', 'editorial_interrupted_recovery', 'bots_support_feedback', 'bots_manual_reconciliation')
@@ -106,8 +106,41 @@ def sign_file(path, key, target):
         release.publish(target,read(sig,16384))
 
 
-def check_reports(reports, m, archive_sha, previous_sha):
-    t,p,l,r,v=(decode(reports[n]) for n in REPORTS)
+CYCLE_IDS = ('order','delivery','invoice','statement','contract','signature','product_release','staging_job','production_job','failed_job','oss_release','engine_route','lite_route')
+CYCLE_CHECKS = ('topology','tenant_isolation','client_acceptance','client_payment_and_refund','bank_reconciliation','contract_revisions','signature_archive','delivery_staging','delivery_production','delivery_incident','oss_contribution','editorial_engine','editorial_lite','bots_delivery','guest_boundary')
+CYCLE_STAFF = ('lead','developer','client_manager','client_developer','accountant','legal','legal_reviewer','operator')
+CYCLE_RIGHTS = ('manage','work','finance','payment.create','payment.approve','legal','legal.write','connections','operations','audit')
+CYCLE_PROJECTS = ('internal','client','oss')
+CYCLE_BOUNDARY = ('independent_owner','no_shared_members','foreign_task','foreign_project','foreign_org_switch','reverse_org_switch','foreign_connections','own_task','role_matrix',*(f'foreign_staff_{x}' for x in CYCLE_STAFF),*(f'reverse_{x}' for x in CYCLE_PROJECTS))
+CYCLE_PROOF = ('delivery_pdf_sha256','bank_digest','signature_sha256','staging_release_sha','production_release_sha','failed_release_sha','engine_snapshot','lite_snapshot')
+
+
+def cycle_report(c,t,when,code_sha):
+    exact(c, ('version','schema','mode','checked_at','projects','owner_id','boundary','role_checks','boundary_checks','ids','checks','proof','status','code_sha256'))
+    require(c['version']==VERSION and c['schema']==51 and c['mode']=='persisted_cycle' and c['status']=='passed','Full-cycle evidence incomplete')
+    require(c['code_sha256']==code_sha,'Full-cycle checker does not match release')
+    require(dt.timedelta(minutes=-5)<=when-timestamp(c['checked_at'])<=dt.timedelta(days=7),'Full-cycle evidence outside review window')
+    require(c['projects']==t['projects'] and c['owner_id']==t['owner_id'],'Full-cycle topology mismatch')
+    require(set(c['projects'])==set(CYCLE_PROJECTS),'Incorrect project kinds')
+    def positive(x): return type(x) is int and x>0
+    b=exact(c['boundary'],('organization_id','owner_id','project_id','task_id'))
+    require(all(positive(x) for x in b.values()) and b['organization_id']!=1 and positive(c['owner_id']) and b['owner_id']!=c['owner_id'] and b['project_id'] not in c['projects'].values(),'Independent tenant required')
+    require(all(positive(x) for x in c['projects'].values()) and len(set(c['projects'].values()))==3,'Invalid pilot project IDs')
+    require(all(x is True for x in exact(c['checks'],CYCLE_CHECKS).values()),'Failed full-cycle check')
+    require(all(x is True for x in exact(c['boundary_checks'],CYCLE_BOUNDARY).values()),'Failed tenant boundary check')
+    keys=[f'{slot}:{kind}:{right}' for slot in CYCLE_STAFF for kind in CYCLE_PROJECTS for right in CYCLE_RIGHTS]
+    require(all(x is True for x in exact(c['role_checks'],keys).values()),'Role matrix incomplete or denied')
+    ids=exact(c['ids'],CYCLE_IDS)
+    require(all(positive(x) for x in ids.values()) and len({ids[x] for x in ('staging_job','production_job','failed_job')})==3 and ids['engine_route']!=ids['lite_route'],'Invalid cycle object IDs')
+    proof=exact(c['proof'],CYCLE_PROOF)
+    for key,value in proof.items():
+        if key.endswith('_release_sha'): require(isinstance(value,str) and re.fullmatch(r'[a-f0-9]{40}',value),'Invalid commit SHA')
+        else: digest(value)
+    require(len({proof[x] for x in ('staging_release_sha','production_release_sha','failed_release_sha')})==1,'Different product release commits')
+
+
+def check_reports(reports, m, archive_sha, previous_sha, code_sha):
+    t,p,l,r,v,c=(decode(reports[n]) for n in REPORTS)
     require(t['version']==VERSION and t['schema']==51 and t['topology_ready'] is True and t['guest_ready'] is True and t['issues']==[] and len(t['projects'])==3 and len(t['staff'])==8 and len(t['teams'])==2 and t['guest_active_ids'], 'Pilot topology or guest not accepted')
     require(p['version']==VERSION and p['mode']=='live_readiness' and p['ready'] is True,'Live readiness not accepted')
     exact(p['connections'],m['integrations'])
@@ -116,6 +149,7 @@ def check_reports(reports, m, archive_sha, previous_sha):
     when=timestamp(v['checked_at']); require(when<=dt.datetime.now(dt.timezone.utc)+dt.timedelta(minutes=5),'Review timestamp in future')
     for value in [t['checked_at'],*(row['checked_at'] for row in p['connections'].values())]:
         require(dt.timedelta(minutes=-5)<=when-timestamp(value)<=dt.timedelta(days=7),'Pilot evidence outside review window')
+    cycle_report(c,t,when,code_sha)
     text(v['stand']); require(v['tax_profile'] in m['tax_profiles'] and v['signature_provider'] in m['signature_providers'],'Unsupported jurisdiction/profile or signature provider')
     require(v['backend'] in ('sqlite','pgsql') and r['backend']==v['backend'],'Restore backend mismatch')
     php=text(v['php_version']); db=text(v['database_version']); require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?',php) and re.fullmatch(r'\d+(?:\.\d+){1,2}',db),'Invalid runtime versions')
@@ -191,7 +225,7 @@ def draft(archive, previous_sha, folder, entries):
 
 def statement(archive, previous_sha, reports, trust_pin):
     require(release.verify(archive)==VERSION,'Invalid release'); m,msha=matrix(archive); a_sha=recovery.digest(archive)
-    summary=check_reports(reports,m,a_sha,digest(previous_sha))
+    summary=check_reports(reports,m,a_sha,digest(previous_sha),recovery.sha(candidate.archive_payload(archive,VERSION)['app/FullCycle.php']))
     return {'format':1,'version':VERSION,'schema':51,'archive_sha256':a_sha,'previous_sha256':previous_sha,'matrix_sha256':msha,'trust_sha256':digest(trust_pin),'reports':{n:recovery.sha(reports[n]) for n in REPORTS},'summary':summary}
 
 
