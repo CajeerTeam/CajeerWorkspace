@@ -5,7 +5,7 @@ namespace Workspace;
 
 use PDO;
 
-const PAGE_TITLES = ['portfolio'=>'Портфель владельца','service_ops'=>'Эксплуатация и поддержка','lead'=>'Рабочее место тимлида','assistant'=>'AI-ассистент проекта','overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss_maintenance'=>'Сопровождение OSS','oss'=>'Open-source workflow','github'=>'GitHub App','delivery'=>'Карточка поставки и QA','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
+const PAGE_TITLES = ['project_management'=>'Управление проектом','portfolio'=>'Портфель владельца','service_ops'=>'Эксплуатация и поддержка','lead'=>'Рабочее место тимлида','assistant'=>'AI-ассистент проекта','overview'=>'Рабочий обзор','projects'=>'Проекты','project'=>'Проект','finance'=>'Финансы','documents'=>'Документы','document'=>'История документа','connections'=>'Подключения','team'=>'Команда','login'=>'Вход в Workspace','invite'=>'Принять приглашение','search'=>'Поиск','notifications'=>'Напоминания','digest'=>'Сводка владельцу','audit'=>'Аудит','payments'=>'Согласование платежей','security'=>'Безопасность','task'=>'Задача','workload'=>'Спринты и время','clients'=>'Клиенты и заказы','oss_maintenance'=>'Сопровождение OSS','oss'=>'Open-source workflow','github'=>'GitHub App','delivery'=>'Карточка поставки и QA','releases'=>'Выпуски проекта','infrastructure'=>'Инфраструктура проекта','deployments'=>'Управляемое развёртывание','invoices'=>'Счета и задолженность','accounting'=>'Бухгалтерский журнал','bank'=>'Банковская сверка','economics'=>'Экономика проекта','tax'=>'UK VAT','contracts'=>'Карточки договоров','preparation'=>'Подготовка документов','approved_acts'=>'Согласованные акты','signing'=>'Подписание и архив','retention'=>'Хранение и выдача','engine'=>'Сайты и публикации Engine','book'=>'Книги и документация','forum'=>'Обсуждения Forum','lite'=>'Сайты EngineLite','editorial'=>'Редакторские выпуски','logs'=>'Журналы Logs','bots'=>'Доставка Bots','incidents'=>'Инциденты и дежурства','reliability'=>'Надёжность интеграций'];
 const PAGE_RIGHTS = ['portfolio'=>'finance','service_ops'=>'connections','finance'=>'finance','export'=>'finance','documents'=>'legal','document'=>'legal','download'=>'legal','connections'=>'connections','team'=>'people','audit'=>'audit','payments'=>'finance','invoices'=>'finance','economics'=>'finance','tax.print'=>'finance','contracts'=>'legal','preparation'=>'legal','prep.print'=>'legal','approved_acts'=>'finance','prep.act'=>'finance','signing'=>'legal','sign.download'=>'legal','retention'=>'legal','engine'=>'connections','book'=>'connections','book.export'=>'connections','forum'=>'connections','lite'=>'connections','editorial'=>'connections','logs'=>'connections','logs.export'=>'connections','bots'=>'connections','incidents'=>'connections'];
 
 function h(mixed $value): string {
@@ -107,6 +107,11 @@ function handlePost(PDO $db, ?array $user): never {
     }
     if (!empty($_SESSION['guest_id'])) {
         if ($act==='logout') authLogout($db);
+        if ($act==='guest.pm') {
+            if (($_SESSION['auth_kind']??null)!=='oidc') throw new Problem('Требуется вход ID.',403);
+            pmGuestDecision($db,(int)$_SESSION['guest_id'],numberId($_POST['id']??0),choice($_POST['decision']??'',['accept'=>'','return'=>''])==='accept',word($_POST['note']??'',1000,'Комментарий',false),hash('sha256',$_SESSION['oidc_handle']));
+            $_SESSION['notice']='Решение сохранено.'; go('guest');
+        }
         if (in_array($act,['guest.offer','guest.delivery'],true)) {
             if (($_SESSION['auth_kind']??null)!=='oidc') throw new Problem('Требуется вход ID.',403);
             clientGuestDecision($db,(int)$_SESSION['guest_id'],$act,numberId($_POST['id']??0),numberId($_POST['version']??0),choice($_POST['decision']??'',['accept'=>'','return'=>''])==='accept',word($_POST['note']??'',1000,'Комментарий',false),hash('sha256',$_SESSION['oidc_handle']));
@@ -309,6 +314,8 @@ function handlePost(PDO $db, ?array $user): never {
             $pid=$projectId();$id=prepCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Операция сохранена.';go('preparation',$act==='prep.template'?['project'=>$pid]:['project'=>$pid,'id'=>$id]);
         case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
             $pid=$projectId();$cid=contractCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Карточка договора сохранена.';go('contracts',['project'=>$pid,'id'=>$cid]);
+        case 'pm.baseline': case 'pm.dependency': case 'pm.propose': case 'pm.apply': case 'pm.cancel': case 'pm.invoice':
+            $pid=$projectId();pmCommand($db,$user,$pid,$key,$act,$_POST);go('project_management',['project'=>$pid]);
         case 'portfolio.decision':
             $pid=$projectId();portfolioCommand($db,$user,$pid,$key,$_POST);$_SESSION['notice']='Решение владельца сохранено.';go('portfolio',['project'=>$pid,'month'=>$_POST['month'],'horizon'=>$_POST['horizon']]);
         case 'econ.settings': case 'econ.budget': case 'econ.rate': case 'econ.class': case 'econ.plan': case 'econ.allocate': case 'econ.cancel': case 'econ.reschedule': case 'econ.unallocate':
@@ -608,6 +615,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);
             $data=ukReport($db,$user,calendarDate($_GET['from']??substr(ukToday(),0,7).'-01'),calendarDate($_GET['to']??ukToday()));
             if($page==='tax.export'){sendUkCsv($data);return;}break;
+        case 'project_management':
+            $data=pmPage($db,$user,numberId($_GET['project']??0));break;
         case 'portfolio':
             $data=portfolioPage($db,$user,$projectId,econMonth($_GET['month']??gmdate('Y-m')),calendarDate($_GET['horizon']??gmdate('Y-m-d',time()+90*86400)),optionalId($_GET['before']??''));break;
         case 'economics':

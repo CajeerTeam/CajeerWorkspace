@@ -70,7 +70,7 @@ function saveMilestone(PDO $db,array $user,string $key,int $project,?int $id,?in
         if ($id===null) return insertId($db,'INSERT INTO milestones(project_id,title,due_on) VALUES(?,?,?)',[$project,...$data]);
         $m=entity($db,'SELECT * FROM milestones WHERE project_id=? AND id=?',[$project,$id]);
         if ((int)$m['version']!==$version || $m['state']!=='open') throw new Problem('Веха закрыта или изменена. Обновите страницу.',409);
-        query($db,'UPDATE milestones SET title=?,due_on=?,version=version+1 WHERE id=?',[...$data,$id]); return $id;
+        query($db,'UPDATE milestones SET title=?,due_on=?,version=version+1 WHERE id=?',[...$data,$id]); pmValidateGraph(pmCalendar($db,$project)); return $id;
     });
 }
 function changeMilestone(PDO $db,array $user,string $key,int $project,int $id,int $version,string $state): int {
@@ -84,7 +84,7 @@ function changeMilestone(PDO $db,array $user,string $key,int $project,int $id,in
             $counts=query($db,"SELECT COUNT(*) total,COUNT(CASE WHEN t.state='done' AND t.result_customer<>'' AND t.acceptance_criteria<>'' THEN 1 END) done FROM task_milestones tm JOIN tasks t ON t.id=tm.task_id WHERE tm.project_id=? AND tm.milestone_id=?",[$project,$id])->fetch();
             if (!(int)$counts['total'] || (int)$counts['total']!==(int)$counts['done']) throw new Problem('Для закрытия вехи нужны завершённые задачи с заказчиком и критериями приёмки.',409);
         }
-        query($db,'UPDATE milestones SET state=?,version=version+1 WHERE id=?',[$state,$id]); return $id;
+        query($db,'UPDATE milestones SET state=?,version=version+1 WHERE id=?',[$state,$id]); pmValidateGraph(pmCalendar($db,$project)); return $id;
     });
 }
 function blockedTask(PDO $db,int $project,int $task): bool {

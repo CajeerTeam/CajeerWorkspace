@@ -256,5 +256,5 @@ function guestPage(PDO $db,string $page): void {
         header('Content-Type: application/pdf'); header('Content-Disposition: attachment; filename="client-document.pdf"'); header('Content-Length: '.strlen($bytes)); echo $bytes; return;
     }
     if (!in_array($page,['guest','overview','login'],true)) throw new Problem('Гостевой доступ ограничен согласованным проектом.',403);
-    pageView('guest','Кабинет клиента',null,['grant'=>$g,'order'=>$order,'offers'=>$order?clientOrderDetails($db,$order,true):[]]);
+    pageView('guest','Кабинет клиента',null,['grant'=>$g,'order'=>$order,'offers'=>$order?clientOrderDetails($db,$order,true):[],'pmChanges'=>$order?pmGuestRows($db,$order):[]]);
 }
