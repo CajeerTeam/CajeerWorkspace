@@ -43,6 +43,7 @@ function changeTask(PDO $db, array $user, string $key, int $taskId, int $version
         if ($task['state']===$state) return $taskId;
         checkTaskTransition($db,$task,$state);
         query($db,'UPDATE tasks SET state=?,version=version+1 WHERE id=?',[$state,$taskId]);
+        if(($task['state']==='done')!==($state==='done')) foreach(query($db,'SELECT task_id FROM task_dependencies WHERE project_id=? AND prerequisite_id=?',[$task['project_id'],$taskId])->fetchAll(PDO::FETCH_COLUMN) as $dependent) leadWaitSync($db,(int)$task['project_id'],(int)$dependent,$taskId);
         return $taskId;
     });
 }

@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.3.3 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.4.0 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -45,10 +45,10 @@ class CandidateTests(unittest.TestCase):
 
     def test_frozen_sql_even_with_recomputed_manifest(self):
         raw=candidate.archive_payload(self.new,candidate.NEW); raw.pop('SHA256SUMS')
-        for name in ('database/001.sql','database/postgresql/036.sql','database/039.sql','database/postgresql/039.sql'):
+        for name in ('database/001.sql','database/postgresql/036.sql','database/040.sql','database/postgresql/040.sql'):
             changed=dict(raw); changed[name]+=b'\n-- unauthorized change\n'
             with self.assertRaises(ValueError): release.validate_payload(changed)
-        self.assertEqual(len(candidate.FREEZE['migrations']),78)
+        self.assertEqual(len(candidate.FREEZE['migrations']),80)
         tampered=dict(raw); tampered['database/001.sql']+=b'\n-- change\n'
         freeze=json.loads(tampered['database/schema-freeze.json']); freeze['migrations']['database/001.sql']=release.sha(tampered['database/001.sql'])
         tampered['database/schema-freeze.json']=json.dumps(freeze).encode()
@@ -93,7 +93,7 @@ class CandidateTests(unittest.TestCase):
             if upgrade:
                 with closing(sqlite3.connect(db)) as c,c:
                     if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
-                        sql=ROOT/'database/039.sql'; c.executescript(sql.read_text()); c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(39,recovery.digest(sql),'applied')); c.execute('PRAGMA user_version=39')
+                        sql=ROOT/'database/040.sql'; c.executescript(sql.read_text()); c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(40,recovery.digest(sql),'applied')); c.execute('PRAGMA user_version=40')
         with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=smoke):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)

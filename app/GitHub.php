@@ -205,6 +205,7 @@ function ghManage(PDO $db,array $user,int $project,string $act,array $form): voi
             query($db,"INSERT INTO github_task_links(task_id,project_id,repository_binding,kind,number) VALUES(?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET kind=excluded.kind,number=excluded.number,version=github_task_links.version+1,snapshot=NULL,synced_at=NULL,last_error=''",[$task,$project,$repo['id'],$kind,$number]);
             ghQueue($db,$repo,entity($db,'SELECT task_id,version FROM github_task_links WHERE task_id=?',[$task]));
         }
+        leadInvalidateLink($db,$u,$project,$task);
         auditEvent($db,$u,$project,$act,$task);
     });
 }

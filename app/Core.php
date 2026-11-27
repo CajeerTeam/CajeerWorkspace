@@ -8,8 +8,8 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.4.0';
-const SCHEMA_VERSION = 39;
+const VERSION = '1.4.1';
+const SCHEMA_VERSION = 40;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
 const STATES = ['todo'=>'К работе', 'doing'=>'В работе', 'done'=>'Готово'];
@@ -158,6 +158,9 @@ function actionProject(PDO $db,string $name,int $id): array {
         'prep.template'=>[(int)entity($db,'SELECT project_id FROM preparation_templates WHERE id=?',[$id])['project_id'],'legal.write'],
         'prep.create','prep.revise','prep.assign','prep.submit','prep.legal','prep.approve','prep.return','prep.cancel'=>[(int)entity($db,'SELECT project_id FROM preparations WHERE id=?',[$id])['project_id'],'legal.write'],
         'document.version'=>[(int)entity($db,'SELECT project_id FROM documents WHERE id=?',[$id])['project_id'],'legal.write'],
+        'lead.review'=>[(int)entity($db,'SELECT project_id FROM lead_review_events WHERE id=?',[$id])['project_id'],'work'],
+        'lead.decision'=>[(int)entity($db,'SELECT project_id FROM lead_decisions WHERE id=?',[$id])['project_id'],'manage'],
+        'lead.wait'=>[(int)entity($db,'SELECT project_id FROM lead_waits WHERE id=?',[$id])['project_id'],'manage'],
         default=>throw new Problem('Неизвестная операция.',409)
     };
     return [$project,$right];

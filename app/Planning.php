@@ -101,7 +101,7 @@ function changeDependency(PDO $db,array $user,string $key,int $taskId,int $versi
             if ($task['state']!=='todo' && $pre['state']!=='done') throw new Problem('Верните задачу в очередь перед добавлением незавершённой зависимости.',409);
             $changed=query($db,'INSERT INTO task_dependencies(project_id,task_id,prerequisite_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',[$project,$taskId,$prerequisite])->rowCount();
         } else $changed=query($db,'DELETE FROM task_dependencies WHERE project_id=? AND task_id=? AND prerequisite_id=?',[$project,$taskId,$prerequisite])->rowCount();
-        if ($changed) query($db,'UPDATE tasks SET version=version+1 WHERE id=?',[$taskId]);
+        if ($changed) { query($db,'UPDATE tasks SET version=version+1 WHERE id=?',[$taskId]); leadWaitSync($db,$project,$taskId,$prerequisite); }
         return $taskId;
     });
 }
