@@ -43,6 +43,7 @@ function econCommand(PDO $db,array $user,int $p,string $key,string $act,array $f
             if((int)($row['version']??0)!==$v)throw new Problem('Бюджет изменился. Обновите страницу.',409);
             if($row){$id=(int)$row['id'];query($db,'UPDATE economics_budgets SET revenue_minor=?,labor_minor=?,direct_minor=?,version=?,actor_id=?,changed_at=? WHERE id=?',[$rev,$labor,$direct,$v+1,$actor,$now,$id]);}
             else $id=insertId($db,'INSERT INTO economics_budgets(project_id,month_on,currency,revenue_minor,labor_minor,direct_minor,version,actor_id,changed_at) VALUES(?,?,?,?,?,?,?,?,?)',[$p,$month,$c,$rev,$labor,$direct,1,$actor,$now]);
+            query($db,'INSERT INTO portfolio_budget_versions(budget_id,version,revenue_minor,labor_minor,direct_minor,actor_id,changed_at) VALUES(?,?,?,?,?,?,?)',[$id,$v+1,$rev,$labor,$direct,$actor,$now]);
         }elseif($act==='econ.rate'){
             $uid=numberId($f['user_id']);$date=calendarDate($f['effective_on']);$c=econCurrency($f['currency']);$rate=econAmount($f['rate']);
             // Historical contributors may receive an initial rate after leaving a project, but never foreign users.

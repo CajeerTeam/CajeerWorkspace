@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline release switch for the schema-42 release candidate (POSIX)."""
+"""Offline release switch for the schema-43 release candidate (POSIX)."""
 import argparse
 import fcntl
 import json
@@ -15,8 +15,8 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.4.2', '1.4.3'
-OLD_SCHEMA, SCHEMA = 41, 42
+OLD, NEW = '1.4.3', '1.5.0'
+OLD_SCHEMA, SCHEMA = 42, 43
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
 
@@ -195,18 +195,13 @@ def old_snapshot(folder, backend, data, objects, env):
 
 
 def migrated_matches(before, after):
-    # Migration 042 is additive: existing business rows and sequences must remain identical.
+    # Migration 043 is additive: existing business rows and sequences must remain identical.
     if before['schema']!=OLD_SCHEMA or after['schema']!=SCHEMA: return False
     if any(recovery.canonical(before[k])!=recovery.canonical(after[k]) for k in ('cash','ledger','objects')): return False
     seq=after['sequences']; previous=before['sequences']
-    if isinstance(seq,dict):
-        if set(seq)!=set(previous)|{'ops_services_id_seq','ops_support_id_seq'} or any(seq[k]!=v for k,v in previous.items()): return False
-        for name in ('ops_services_id_seq','ops_support_id_seq'):
-            initial=seq[name]
-            if int(initial['last_value'])!=1 or initial['is_called'] not in (False,0,'0','f'): return False
-    elif recovery.canonical(seq)!=recovery.canonical(previous): return False
-    old=before['tables']; new=after['tables']; extra={'ops_services','ops_service_incidents','ops_support','ops_followups'}
-    return set(new)==set(old)|extra and all(new[k]==v for k,v in old.items() if k!='schema_migrations') and all(new[k]['rows']==0 for k in extra) and new['schema_migrations']['rows']==SCHEMA
+    if recovery.canonical(seq)!=recovery.canonical(previous): return False
+    old=before['tables']; new=after['tables']; extra={'portfolio_budget_versions','portfolio_decisions'}
+    return set(new)==set(old)|extra and all(new[k]==v for k,v in old.items() if k!='schema_migrations') and new['portfolio_decisions']['rows']==0 and new['portfolio_budget_versions']['rows']==old['economics_budgets']['rows'] and new['schema_migrations']['rows']==SCHEMA
 
 
 def smoke(folder, version, env, upgrade=False):
@@ -253,7 +248,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         if target==OLD:
             # Rollback requires the exact pre-upgrade schema and state.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 41 using 1.4.2 recovery tools') from exc
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 42 using 1.4.3 recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')
