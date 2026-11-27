@@ -23,5 +23,11 @@ aiCheck(aiResponse(aiFixture('Not enough data',[]),$c)['links']===[],'explicit u
 $big=$c;$big['title']=str_repeat('a',65537);aiDeny(fn()=>aiPayload($big,'q','test',1000),422);
 $_SESSION=['csrf'=>'test'];$u=['id'=>1,'role'=>'owner','name'=>'Fixture','organization_id'=>1];$x=aiResponse(aiFixture('<script>alert(1)</script> [T9]',['T9']),$c)+['coverage'=>$c['coverage'],'observed'=>1100];
 $x['coverage']['tasks']=['count'=>1,'selection'=>'prioritized_sample','truncated'=>true];ob_start();pageView('assistant','Test',$u,['projects'=>[2=>'Test'],'selected'=>['id'=>2,'title'=>'Test'],'topic'=>'overview','term'=>'','question'=>'<script>','result'=>$x]);$html=ob_get_clean();aiCheck(!str_contains($html,'<script>')&&str_contains($html,'&lt;script&gt;')&&!str_contains($html,'href="https://evil.test')&&str_contains($html,'href="./?p=task&amp;id=9"'),'escaped answer and server link');
+aiCheck(aiRoleTopic('owner','internal')==='budget'&&aiRoleTopic('owner','client')==='stages'&&aiRoleTopic('manager','internal')==='blockers','owner/team lead/freelancer defaults');
+aiCheck(aiRoleTopic('accountant','internal')==='discrepancies'&&aiRoleTopic('legal','internal')==='revisions'&&aiRoleTopic('viewer','internal')==='overview','accountant/legal/reader defaults');
+putenv('WORKSPACE_AI_MODELS=approved-model,gpt-4.1-mini');aiCheck(aiModels(['model'=>'gpt-4.1-mini'])===['gpt-4.1-mini','approved-model'],'operator model allowlist');putenv('WORKSPACE_AI_MODELS=https://bad.test');aiDeny(fn()=>aiModels(['model'=>'gpt-4.1-mini']),503);putenv('WORKSPACE_AI_MODELS');
+$finance=['topic'=>'budget','sources'=>[aiRoleSource('B',1,'budget','EUR',['currency'=>'EUR','revenue'=>['actual_minor'=>12345]],url('economics',['project'=>2]))]];
+aiCheck(aiResponse(aiFixture('Есть отклонение [B1]',['B1']),$finance)['links']===$finance['sources'],'server financial facts');aiDeny(fn()=>aiResponse(aiFixture('123.45 EUR [B1]',['B1']),$finance),503);aiDeny(fn()=>aiResponse(aiFixture('Нет [B2]',[]),$finance),503);aiCheck(aiFactLines($finance['sources'][0]['fields'])[1][1]===money(12345).' EUR','exact server money formatting');
+aiCheck(sensitiveAction('ai.policy'),'MFA policy mutation');
 foreach(['WORKSPACE_AI_ENABLED','WORKSPACE_OPENAI_API_KEY','WORKSPACE_OPENAI_MODEL','WORKSPACE_AI_PROJECT_IDS'] as $name)putenv($name);
 echo "OK · $n assistant unit checks\n";

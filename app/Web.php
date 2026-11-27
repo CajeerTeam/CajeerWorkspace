@@ -172,6 +172,8 @@ function handlePost(PDO $db, ?array $user): never {
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
+        case 'ai.policy':
+            aiPolicySave($db,$user,$_POST,aiConfig());go('assistant');
         case 'ai.ask':
             $cfg=aiConfig();$pid=$projectId();$topic=choice($_POST['topic']??'',AI_TOPICS);$term=word($_POST['term']??'',120,'Ключевые слова',false);$question=word($_POST['question']??'',1200,'Вопрос');
             if(($_POST['consent']??'')!=='yes')throw new Problem('Подтвердите передачу выбранного контекста в OpenAI.',422);
@@ -183,7 +185,7 @@ function handlePost(PDO $db, ?array $user): never {
             };
             $answer=aiAsk($db,$user,$pid,$topic,$term,$question,$cfg,$recheck);
             $fresh=$freshUser;$projects=aiProjects($db,$fresh,$cfg);$selected=aiProject($db,$fresh,$pid,$cfg);
-            pageView('assistant',PAGE_TITLES['assistant'],$fresh,['projects'=>$projects,'selected'=>$selected,'topic'=>$topic,'term'=>$term,'question'=>$question,'result'=>$answer]);exit;
+            pageView('assistant',PAGE_TITLES['assistant'],$fresh,['projects'=>$projects,'selected'=>$selected,'topic'=>$topic,'term'=>$term,'question'=>$question,'result'=>$answer,'policy'=>aiPolicy($db,(int)$fresh['organization_id'],$cfg),'models'=>aiModels($cfg),'topics'=>aiTopicsFor($db,$fresh,$pid,aiPolicy($db,(int)$fresh['organization_id'],$cfg)),'history'=>[]]);exit;
         case 'reliability.reconcile':
             $pid=$projectId();$result=relReconcile($db,$user,$pid);$_SESSION['notice']='Сверка поставлена в очередь: '.json_encode($result,JSON_THROW_ON_ERROR);go('reliability',['project'=>$pid]);
         case 'reliability.verify':
@@ -490,7 +492,10 @@ function dispatch(PDO $db, ?array $user, string $page): void {
     switch ($page) {
         case 'assistant':
             $cfg=aiConfig();$projects=aiProjects($db,$user,$cfg);$selected=$projectId===null?null:aiProject($db,$user,$projectId,$cfg);
-            $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'overview','term'=>'','question'=>'','result'=>null];break;
+            $policy=aiPolicy($db,(int)$user['organization_id'],$cfg,$user['role']==='owner');$models=aiModels($cfg);
+            $history=$selected&&in_array($policy['model'],$models,true)?aiHistory($db,$user,(int)$selected['id'],$cfg):[];
+            if($selected){$current=currentUser($db);if(!$current||(int)$current['id']!==(int)$user['id']||(int)$current['organization_id']!==(int)$user['organization_id'])throw new Problem('Сессия изменена.',403);if(aiPolicy($db,(int)$user['organization_id'],$cfg,$user['role']==='owner')!==$policy)throw new Problem('Политика изменена.',409);aiProject($db,$current,(int)$selected['id'],$cfg);}
+            $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'role','term'=>'','question'=>'','result'=>null,'policy'=>$policy,'models'=>$models,'topics'=>$selected?aiTopicsFor($db,$user,(int)$selected['id'],$policy):[],'history'=>$history];break;
         case 'reliability':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=relPage($db,$user,$projectId,optionalId($_GET['before']??''));break;
         case 'incidents':

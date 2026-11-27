@@ -38,6 +38,7 @@ CajeerWorkspace PHP $version
   php bin/workspace user:password EMAIL
   php bin/workspace user:disable EMAIL
   php bin/workspace user:enable EMAIL
+  php bin/workspace ai:purge
   php bin/workspace updates:auto configure /absolute/schedule.json
   php bin/workspace updates:auto enable|disable|pause|resume|status|run|ack-recovery
   php bin/workspace updates:auto skip|unskip VERSION
@@ -194,6 +195,8 @@ try {
     }
     $db = database();
     switch ($command) {
+        case 'ai:purge':
+            echo json_encode(['deleted'=>aiPurge($db)],JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'updates:check':
         case 'updates:download':
         case 'updates:plan':
@@ -237,7 +240,7 @@ try {
             echo json_encode(['version'=>VERSION,'mode'=>'live_readiness','ready'=>$ready,'connections'=>$rows],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT),PHP_EOL;
             exit($ready?0:1);
         case 'reliability:work':
-            if($argc>3)throw new Problem('Формат: reliability:work [LIMIT]');echo json_encode(relWork($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
+            if($argc>3)throw new Problem('Формат: reliability:work [LIMIT]');aiPurge($db);echo json_encode(relWork($db,$argc===3?numberId($argv[2]):10),JSON_THROW_ON_ERROR),PHP_EOL;break;
         case 'reliability:reconcile': case 'reliability:retry':
             if($argc!==($command==='reliability:retry'?6:4))throw new Problem('Формат: reliability:reconcile PROJECT_ID OWNER_ID | reliability:retry PROJECT_ID OWNER_ID PROVIDER JOB_ID');
             $pid=numberId($argv[2]);$p=entity($db,'SELECT organization_id FROM projects WHERE id=?',[$pid]);$actor=organizationUser($db,['id'=>numberId($argv[3])],(int)$p['organization_id']);

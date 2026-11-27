@@ -49,3 +49,4 @@ require_once __DIR__ . '/Pilot.php';
 require_once __DIR__ . '/Recovery.php';
 require_once __DIR__ . '/WorkspaceUpdates.php';
 require_once __DIR__ . '/Assistant.php';
+require_once __DIR__ . '/AssistantPolicy.php';

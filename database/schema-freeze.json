@@ -1,5 +1,5 @@
 {
-  "schema": 36,
+  "schema": 37,
   "migrations": {
     "database/001.sql": "49e635769f7c1ffb32f9eb7258fc749b2093b760126047a286b3c76b1ab19f08",
     "database/002.sql": "6d5549a5f6d8384c4c64f1ca675ed28f50941b82e4964e910cda252116d0820f",
@@ -72,6 +72,8 @@
     "database/postgresql/034.sql": "8de62c248fc83cf66bc7c57d5dbfe353f39b5509bd87f0d5be7cb889d630242e",
     "database/postgresql/035.sql": "7d9c38ac7d7ac29a4ee1eb62e46360d3ab2c40acce9e501ffd6735509d61d21c",
     "database/036.sql": "e34fd10728e4bd4b6a9d34f216c6ca0e462fa15b26e581c0d2240360090523ce",
-    "database/postgresql/036.sql": "2e1a47a15fc2ec6c1ba9e96156367267b26dfe67528a4de22c88fe6dd8c85f66"
+    "database/postgresql/036.sql": "2e1a47a15fc2ec6c1ba9e96156367267b26dfe67528a4de22c88fe6dd8c85f66",
+    "database/037.sql": "d294a8c77fa27f23400ed65afcf7e61b64c26a6ae1f6c05c046939eb8c8d7e90",
+    "database/postgresql/037.sql": "c5972676e08ff2c4c327bc1eecd1641994e07781930612948693e4f098d0e6f5"
   }
 }
