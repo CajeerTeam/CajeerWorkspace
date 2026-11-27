@@ -9,3 +9,9 @@ function clientDecisionForm(string $act,int $id,int $version): void { ?>
 <?php if ($offer['status']==='offered'): clientDecisionForm('guest.offer',(int)$offer['id'],(int)$offer['version']); elseif ($offer['decided_at']): ?><p><?= h($offer['decision_note']) ?> · <?= h(gmdate('Y-m-d H:i',$offer['decided_at'])) ?> UTC</p><?php endif ?></section><?php endforeach ?><?php if (!$offers): ?><section class="panel inset"><p>Предложение пока готовится.</p></section><?php endif; endif ?>
 
 <?php foreach($pmChanges??[] as $r): ?><section class="panel inset"><h2>Запрос на изменение #<?= h($r['number']) ?> — <?= h($r['title']) ?></h2><p><?= h(PM_STATES[$r['status']]) ?></p><h3>Предлагаемый объём</h3><p class="client-text"><?= h($r['proposed_scope']) ?></p><p>Дополнительная стоимость без налогов: <?= h(money((int)$r['amount_minor']).' '.$r['currency']) ?> · срок оплаты <?= h(displayDate($r['payment_due'])) ?></p><h3>Изменения сроков</h3><?php foreach($r['dates'] as $d): ?><p><?= h(displayDate($d['before']).' → '.displayDate($d['after'])) ?></p><?php endforeach ?><?php if(!$r['dates']): ?><p>Без сдвига сроков.</p><?php endif ?><?php if($r['status']==='pending'): clientDecisionForm('guest.pm',(int)$r['number'],1); elseif($r['decided_at']): ?><p><?= h($r['decision_note']) ?> · <?= h(gmdate('Y-m-d H:i',(int)$r['decided_at'])) ?> UTC</p><?php endif ?></section><?php endforeach ?>
+
+<?php if(!empty($order)): ?>
+<section class="panel inset"><h2>Оплата и обслуживание</h2>
+<?php foreach($freelanceServices??[] as $svc): ?><p><b><?= h($svc['title']) ?></b> · <?= h(money((int)$svc['monthly_minor']).' '.$svc['currency']) ?> / месяц без налогов · с <?= h(displayDate($svc['first_service_on'])) ?> · <?= $svc['stopped_at']?'Обслуживание остановлено':'Активно' ?></p><p><?= h($svc['service_scope']) ?></p><?php endforeach ?>
+<?php $billRows=$freelanceBills??[]; $billGuest=true; require ROOT.'/views/freelance_bills.php'; ?>
+</section><?php endif ?>

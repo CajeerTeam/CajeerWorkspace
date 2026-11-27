@@ -314,6 +314,8 @@ function handlePost(PDO $db, ?array $user): never {
             $pid=$projectId();$id=prepCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Операция сохранена.';go('preparation',$act==='prep.template'?['project'=>$pid]:['project'=>$pid,'id'=>$id]);
         case 'contract.create': case 'contract.revise': case 'contract.attach': case 'contract.detach': case 'contract.activate': case 'contract.obligation': case 'contract.decide':
             $pid=$projectId();$cid=contractCommand($db,$user,$pid,$key,$act,$_POST);$_SESSION['notice']='Карточка договора сохранена.';go('contracts',['project'=>$pid,'id'=>$cid]);
+        case 'freelance.package': case 'freelance.offer': case 'freelance.bill': case 'freelance.stop': case 'freelance.discard':
+            $oid=freelanceCommand($db,$user,$key,$act,$_POST); $_SESSION['notice']='Условия или счёт сохранены.'; go('clients',$act==='freelance.package'?[]:['id'=>$oid]);
         case 'capacity.calendar': case 'capacity.assign': case 'capacity.transfer':
             capacityCommand($db,$user,$key,$act,$_POST);$_SESSION['notice']='План ёмкости сохранён.';go('capacity',['week'=>weekStart($_POST['week']??'')]);
         case 'pm.baseline': case 'pm.dependency': case 'pm.propose': case 'pm.apply': case 'pm.cancel': case 'pm.invoice':
@@ -654,7 +656,8 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             if (is_array($token) && $token['project']===$pid && $token['actor']===(int)$user['id']) $data['inviteToken']=$token['token'];
             break;
         case 'clients':
-            $id=optionalId($_GET['id']??''); $data=clientsPage($db,$user,$id,numberId($_GET['n']??1));
+            $id=optionalId($_GET['id']??''); $data=clientsPage($db,$user,$id,numberId($_GET['n']??1)); $data['freelance']=freelancePageData($db,$user,$data['order']??null);
+            if($id===null) foreach(array_slice($data['orders'],0,50) as $o) { $overdue=array_filter(freelanceBills($db,$o),fn($b)=>$b['overdue']); if($overdue)$data['freelanceOverdue'][(int)$o['id']]=count($overdue); }
             if ($id!==null && ($_SESSION['client_token_order']??null)===$id) { $data['clientToken']=$_SESSION['client_token']??null; unset($_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); }
             break;
         case 'workload':
@@ -663,7 +666,7 @@ function dispatch(PDO $db, ?array $user, string $page): void {
         case 'search':
             $data=discoverySearch($db,$user,word($_GET['q']??'',120,'Поиск',false),$projectId,word($_GET['kind']??'',32,'Тип',false),numberId($_GET['n']??1),mfaFresh());break;
         case 'notifications':
-            $data=reminderInbox($db,$user,$projectId,mfaFresh(),time(),word($_GET['kind']??'',32,'Тип',false),numberId($_GET['n']??1),choice($_GET['unread']??'0',['0'=>'','1'=>''])==='1')+reminderSettings($db,$user,$projectId,mfaFresh());break;
+            $data=reminderInbox($db,$user,$projectId,mfaFresh(),time(),word($_GET['kind']??'',32,'Тип',false),numberId($_GET['n']??1),choice($_GET['unread']??'0',['0'=>'','1'=>''])==='1')+reminderSettings($db,$user,$projectId,mfaFresh());if($user['role']==='owner'&&mfaFresh())$data['freelanceReminders']=freelanceReminders($db,$user,$projectId);break;
         case 'digest':
             $horizon=(int)choice($_GET['horizon']??'7',array_combine(array_map('strval',range(0,90)),range(0,90)));$data=reminderDigest($db,$user,$projectId,mfaFresh(),time(),$horizon);break;
         case 'overview':

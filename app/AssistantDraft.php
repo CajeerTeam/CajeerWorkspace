@@ -71,6 +71,7 @@ function aiDraftContext(PDO $db,array $u,int $p,array $input,array $cfg): array 
         $c['coverage']=['stages'=>['selection'=>'exact_target','count'=>1,'truncated'=>false]];
         $target=['recipient'=>$o['contact_name'].' <'.$o['contact_email'].'> (заказ #'.$o['id'].', отправки нет)','href'=>url('clients',['id'=>$o['id']]),'before'=>['Этап'=>$s['title'],'Срок'=>$s['due_on'],'Редакция сметы'=>(string)$offer['revision'],'Версия сметы'=>(string)$offer['version'],'Статус'=>$offer['status']],'identity'=>hash('sha256',json_encode([$o,$offer,$stages,$last],JSON_THROW_ON_ERROR))];
         if($kind==='estimate'){
+            if(freelanceLocked($db,(int)$offer['id']))throw new Problem('Пакетная смета неизменяема.',409);
             if($offer['status']!=='draft')throw new Problem('Изменять можно только черновую смету.',409);
             $next=$total-(int)$s['amount_minor']+$input['amount'];if($next>99999999999)throw new Problem('Превышен предел суммы сметы.',422);
             $target['before']+=['Объём работ'=>$s['scope'],'Сумма этапа'=>money((int)$s['amount_minor']).' '.$offer['currency'],'Итого смета'=>money($total).' '.$offer['currency']];

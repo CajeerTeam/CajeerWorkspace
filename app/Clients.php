@@ -47,6 +47,7 @@ function clientCommand(PDO $db,array $user,string $key,string $act,array $f): in
             } elseif (in_array($act,['client.stage','client.stage.remove','client.publish','client.offer.edit'],true)) {
                 $offer=clientOffer($db,$id,numberId($f['offer_id']??0)); $oid=(int)$offer['id']; clientVersion($offer,numberId($f['version']??0));
                 if ($offer['status']!=='draft') throw new Problem('Отправленная смета неизменяема.',409);
+                if ($act!=='client.publish' && freelanceLocked($db,$oid)) throw new Problem('Условия пакетного предложения зафиксированы. Для изменения используйте новую редакцию после отклонения.',409);
                 if ($act==='client.offer.edit') query($db,'UPDATE client_offers SET scope=?,currency=? WHERE id=?',[criteriaText($f['scope']??''),choice($f['currency']??'',array_combine(CURRENCIES,CURRENCIES)),$oid]);
                 elseif ($act==='client.publish') {
                     $stages=query($db,'SELECT * FROM client_stages WHERE offer_id=?',[$oid])->fetchAll(); if (!$stages) throw new Problem('Добавьте хотя бы один этап.',409); clientTotals($stages);

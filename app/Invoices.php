@@ -74,7 +74,7 @@ function invoiceChange(PDO $db,array $user,int $project,int $id,string $key,stri
             $today=ukProfile($db,(int)$i['entity_id'])?ukToday():gmdate('Y-m-d');$year=(int)substr($today,0,4);$total=0;foreach(invoiceLines($db,$id) as $l)$total+=invoiceLineAmount((int)$l['quantity'],(int)$l['unit_minor']);
             if($total<1||$total!==(int)$i['total_minor']||$i['due_on']<$today)throw new Problem('Проверьте позиции, итог и срок оплаты.');
             if(!array_key_exists((int)$i['counterparty_id'],array_column(invoiceCounterparties($db,$u,$project),'name','id')))throw new Problem('Контрагент больше недоступен.',403);
-            pmInvoiceGuard($db,$i);
+            pmInvoiceGuard($db,$i); freelanceInvoiceGuard($db,$i);
             $seller=entity($db,'SELECT name,registration,address,bank_details,version FROM legal_entities WHERE id=? AND organization_id=?',[$i['entity_id'],$u['organization_id']]);
             $buyer=entity($db,'SELECT name,registration FROM counterparties WHERE id=? AND organization_id=?',[$i['counterparty_id'],$u['organization_id']]);
             $tax=ukIssue($db,$i,$seller,$form,$total,$today);if($tax){accountingCheckCashDate($db,$project,$today);$total=$tax['gross'];}unset($seller['version']);

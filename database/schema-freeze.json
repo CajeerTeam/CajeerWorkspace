@@ -1,5 +1,5 @@
 {
-  "schema": 45,
+  "schema": 46,
   "migrations": {
     "database/001.sql": "49e635769f7c1ffb32f9eb7258fc749b2093b760126047a286b3c76b1ab19f08",
     "database/002.sql": "6d5549a5f6d8384c4c64f1ca675ed28f50941b82e4964e910cda252116d0820f",
@@ -46,6 +46,7 @@
     "database/043.sql": "0e85c3aef7091c8306240abf929b06eece5d3a401e1535132ba8b1d9eb3736b2",
     "database/044.sql": "d10d75235288ad2fa23898744cc5b6c6e124403d36d6aec5bac8ffa86666193b",
     "database/045.sql": "685e6e187de870666cbaeb663cce37b9c42f9a4d7678003881a8b7d50aaf59f5",
+    "database/046.sql": "a49a42e3069e1d5062e2754f67dec824bed60745f6add1ad83b06d4007b7c4fa",
     "database/postgresql/001.sql": "229f3c6521910f0906c14a6c471e5174e446829e8deb12278ed8f57e6d35e55e",
     "database/postgresql/002.sql": "13876dfe7d0acf4550bf665320c5738d5b6cc67188f36cf6e26529efd2daa238",
     "database/postgresql/003.sql": "b7045cc63887f2ed67a141280dcc9c6a8d7e77ccfc404d647b8e4a45ce934bbb",
@@ -90,6 +91,7 @@
     "database/postgresql/042.sql": "1feee32055381d95215c71729de6563a85e35454c3fa25e7dd96a32ad5764680",
     "database/postgresql/043.sql": "cad52070755ef03e34039682882beb11c711f1eed7b65c22a79cd8dbffd2f9e5",
     "database/postgresql/044.sql": "14d84900da95b02f48376e6341d0e57331fafe8532fc429feff0d6a9f67e74fd",
-    "database/postgresql/045.sql": "24245808994c60c7fc0e7ccb1ad54a7e5e41ce0bd9f29b5fe1a8d16e9a810ddb"
+    "database/postgresql/045.sql": "24245808994c60c7fc0e7ccb1ad54a7e5e41ce0bd9f29b5fe1a8d16e9a810ddb",
+    "database/postgresql/046.sql": "c4e6abaeda6fb843650ed8ca0213506b2a2cc0fc97ac8eefeab5e9fd5041ec60"
   }
 }

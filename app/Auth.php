@@ -47,7 +47,7 @@ function authThrottle(PDO $db,string $bucket,int $limit=8): void {
 }
 function mfaFresh(): bool { return (int)($_SESSION['mfa_at']??0)>=time()-300 && ($_SESSION['mfa_at']??0)<=time(); }
 function sensitiveAction(string $act): bool {
-    return in_array($act,['rate.save','time.approve','time.reject','ai.policy','ai.draft.create','ai.draft.confirm'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice','accounting','bank','econ','tax','contract','prep','sign','retention','engine','book','forum','lite','editorial','logs','bots','incident','reliability','lead','ops','portfolio','capacity'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
+    return in_array($act,['rate.save','time.approve','time.reject','ai.policy','ai.draft.create','ai.draft.confirm'],true) || in_array(explode('.',$act,2)[0],['cash','payment','document','connection','org','team','invite','guest','project','client','oss','github','release','infra','deploy','invoice','accounting','bank','econ','tax','contract','prep','sign','retention','engine','book','forum','lite','editorial','logs','bots','incident','reliability','lead','ops','portfolio','capacity','freelance'],true)&&!in_array($act,['org.switch','project.create','invite.accept'],true);
 }
 function requireMfa(string $act): void {
     if (sensitiveAction($act)&&!mfaFresh()) throw new Problem('Подтвердите второй фактор в разделе «Безопасность», затем повторите действие.',403);
@@ -256,5 +256,5 @@ function guestPage(PDO $db,string $page): void {
         header('Content-Type: application/pdf'); header('Content-Disposition: attachment; filename="client-document.pdf"'); header('Content-Length: '.strlen($bytes)); echo $bytes; return;
     }
     if (!in_array($page,['guest','overview','login'],true)) throw new Problem('Гостевой доступ ограничен согласованным проектом.',403);
-    pageView('guest','Кабинет клиента',null,['grant'=>$g,'order'=>$order,'offers'=>$order?clientOrderDetails($db,$order,true):[],'pmChanges'=>$order?pmGuestRows($db,$order):[]]);
+    pageView('guest','Кабинет клиента',null,['grant'=>$g,'order'=>$order,'offers'=>$order?clientOrderDetails($db,$order,true):[],'pmChanges'=>$order?pmGuestRows($db,$order):[],'freelanceBills'=>$order?freelanceBills($db,$order,true):[],'freelanceServices'=>$order?freelanceGuestServices($db,$order):[]]);
 }
