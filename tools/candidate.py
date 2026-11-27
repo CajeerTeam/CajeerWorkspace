@@ -15,8 +15,8 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.3.0', '1.3.1'
-OLD_SCHEMA, SCHEMA = 36, 37
+OLD, NEW = '1.3.1', '1.3.2'
+OLD_SCHEMA, SCHEMA = 37, 37
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
 
@@ -195,12 +195,8 @@ def old_snapshot(folder, backend, data, objects, env):
 
 
 def migrated_matches(before, after):
-    # Migration 037 adds empty tables; all previous business rows must be identical.
-    if before['schema']!=OLD_SCHEMA or after['schema']!=SCHEMA: return False
-    old=before['tables']; new=after['tables']; additions={'ai_org_policies','ai_daily_usage','ai_history'}
-    return (set(new)==set(old)|additions and all(new[k]==v for k,v in old.items() if k!='schema_migrations')
-            and all(new[k]['rows']==0 for k in additions) and new['schema_migrations']['rows']==SCHEMA
-            and all(recovery.canonical(before[k])==recovery.canonical(after[k]) for k in ('cash','ledger','objects','sequences')))
+    # This release keeps the exact previous schema and logical state.
+    return before['schema']==OLD_SCHEMA and after['schema']==SCHEMA and recovery.canonical(before)==recovery.canonical(after)
 
 
 def smoke(folder, version, env, upgrade=False):
@@ -247,7 +243,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         if target==OLD:
             # Rollback requires the exact pre-upgrade schema and state.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 36 using 1.3.0 recovery tools') from exc
+            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 37 using 1.3.1 recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')

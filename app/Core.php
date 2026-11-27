@@ -8,7 +8,7 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const SCHEMA_VERSION = 37;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
@@ -75,7 +75,14 @@ function database(bool $install = false, bool $upgrade = false, ?string $backupP
 }
 
 function atomic(PDO $db, callable $work): mixed {
+    static $active=null; $active??=new \WeakMap();
+    if(isset($active[$db])) {
+        $db->exec('SAVEPOINT workspace_nested');
+        try { $result=$work(); $db->exec('RELEASE SAVEPOINT workspace_nested'); return $result; }
+        catch(Throwable $e) { $db->exec('ROLLBACK TO SAVEPOINT workspace_nested'); $db->exec('RELEASE SAVEPOINT workspace_nested'); throw $e; }
+    }
     if (isPostgres($db)) { $db->beginTransaction(); } else $db->exec('BEGIN IMMEDIATE');
+    $active[$db]=true;
     try {
         if (isPostgres($db)) $db->query('SELECT pg_advisory_xact_lock(724009201)');
         $result = $work();
@@ -84,7 +91,7 @@ function atomic(PDO $db, callable $work): mixed {
     } catch (Throwable $e) {
         if (isPostgres($db)) { if ($db->inTransaction()) $db->rollBack(); } else $db->exec('ROLLBACK');
         throw $e;
-    }
+    } finally { unset($active[$db]); }
 }
 
 function isPostgres(PDO $db): bool { return $db->getAttribute(PDO::ATTR_DRIVER_NAME)==='pgsql'; }

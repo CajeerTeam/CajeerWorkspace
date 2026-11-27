@@ -39,6 +39,7 @@ function sessionOpen(): void {
     $secure = oidcEnabled() || (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS']!=='off') || getenv('WORKSPACE_HTTPS')==='1';
     session_set_cookie_params(['lifetime'=>0,'path'=>'/','secure'=>$secure,'httponly'=>true,'samesite'=>'Lax']);
     if (!session_start()) throw new \RuntimeException('Не удалось открыть сессию.');
+    if(isset($_SESSION['ai_draft'])&&(!aiEnabled()||($_SESSION['ai_draft']['expires']??0)<=time()))unset($_SESSION['ai_draft']);
     $_SESSION['csrf'] ??= bin2hex(random_bytes(32));
 }
 
@@ -167,13 +168,39 @@ function handlePost(PDO $db, ?array $user): never {
             }
             throw new Problem('Организация требует вход через SkiF4er ID.',403);
         }
-        unset($_SESSION['oidc_tx']); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
+        unset($_SESSION['oidc_tx'],$_SESSION['ai_draft']); $_SESSION['org']=$u['organization_id']; unset($_SESSION['oss_token'],$_SESSION['invite_token'],$_SESSION['guest_token'],$_SESSION['guest_token_project'],$_SESSION['client_token'],$_SESSION['client_token_order'],$_SESSION['retention_link']); $_SESSION['csrf']=bin2hex(random_bytes(32)); go('overview'); }
     $user=organizationUser($db,$user);
     $key = word($_POST['request_key'] ?? '',32,'Форма');
     $projectId = static fn() => numberId($_POST['project_id'] ?? 0);
     switch ($act) {
         case 'ai.policy':
-            aiPolicySave($db,$user,$_POST,aiConfig());go('assistant');
+            aiPolicySave($db,$user,$_POST,aiConfig());unset($_SESSION['ai_draft']);go('assistant');
+        case 'ai.draft.create':
+        case 'ai.draft.confirm':
+        case 'ai.draft.cancel':
+            $pid=$projectId();$cfg=aiConfig();aiProject($db,$user,$pid,$cfg);
+            if($act==='ai.draft.cancel'){
+                $proposal=$_SESSION['ai_draft']??null;
+                if(is_array($proposal)&&$proposal['handle']===($_POST['handle']??null)&&$proposal['project']===$pid&&$proposal['org']===(int)$user['organization_id']&&$proposal['user']===(int)$user['id'])unset($_SESSION['ai_draft']);
+                go('assistant',['project'=>$pid]);
+            }
+            if(($_SESSION['auth_kind']??null)==='oidc'&&!validateOidcSession($db))throw new Problem('Сессия ID больше не подтверждена.',403);
+            $recheck=static function()use($db):array{
+                $fresh=currentUser($db);if(!$fresh||empty($fresh['organization_id'])||(($fresh['auth_kind']??null)==='emergency'&&!($_SESSION['emergency_verified']??false)))throw new Problem('Сессия больше не действует.',403);
+                requireIdentitySession($db,$fresh);return $fresh;
+            };
+            if($act==='ai.draft.create'){
+                if(($_POST['consent']??'')!=='yes')throw new Problem('Подтвердите передачу выбранного контекста в OpenAI.',422);
+                unset($_SESSION['ai_draft']);
+                $checkProvider=static function()use($db,$recheck):array{if(($_SESSION['auth_kind']??null)==='oidc'&&!validateOidcSession($db))throw new Problem('Сессия ID больше не подтверждена.',403);return $recheck();};
+                $_SESSION['ai_draft']=aiDraftCreate($db,$user,$pid,$_POST,$cfg,$checkProvider);
+                go('assistant',['project'=>$pid]);
+            }
+            $proposal=$_SESSION['ai_draft']??null;
+            if(!is_array($proposal)||!is_string($_POST['handle']??null)||!hash_equals($proposal['handle'],$_POST['handle'])||($_POST['confirm']??'')!=='yes')throw new Problem('Нет подтверждённого предпросмотра. Создайте новый черновик.',409);
+            $result=aiDraftConfirm($db,$user,$pid,$proposal,$cfg,$recheck);unset($_SESSION['ai_draft']);
+            if($result['text']!==null){header('Content-Type: text/plain; charset=utf-8');header('Content-Disposition: attachment; filename="workspace-'.$result['kind'].'-'.$pid.'.txt"');header('Cache-Control: private, no-store');echo $result['text'];exit;}
+            $_SESSION['notice']='Черновик применён.';header('Location: '.$result['href'],true,303);exit;
         case 'ai.ask':
             $cfg=aiConfig();$pid=$projectId();$topic=choice($_POST['topic']??'',AI_TOPICS);$term=word($_POST['term']??'',120,'Ключевые слова',false);$question=word($_POST['question']??'',1200,'Вопрос');
             if(($_POST['consent']??'')!=='yes')throw new Problem('Подтвердите передачу выбранного контекста в OpenAI.',422);
@@ -495,7 +522,14 @@ function dispatch(PDO $db, ?array $user, string $page): void {
             $policy=aiPolicy($db,(int)$user['organization_id'],$cfg,$user['role']==='owner');$models=aiModels($cfg);
             $history=$selected&&in_array($policy['model'],$models,true)?aiHistory($db,$user,(int)$selected['id'],$cfg):[];
             if($selected){$current=currentUser($db);if(!$current||(int)$current['id']!==(int)$user['id']||(int)$current['organization_id']!==(int)$user['organization_id'])throw new Problem('Сессия изменена.',403);if(aiPolicy($db,(int)$user['organization_id'],$cfg,$user['role']==='owner')!==$policy)throw new Problem('Политика изменена.',409);aiProject($db,$current,(int)$selected['id'],$cfg);}
-            $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'role','term'=>'','question'=>'','result'=>null,'policy'=>$policy,'models'=>$models,'topics'=>$selected?aiTopicsFor($db,$user,(int)$selected['id'],$policy):[],'history'=>$history];break;
+            $data=['projects'=>$projects,'selected'=>$selected,'topic'=>'role','term'=>'','question'=>'','result'=>null,'policy'=>$policy,'models'=>$models,'topics'=>$selected?aiTopicsFor($db,$user,(int)$selected['id'],$policy):[],'history'=>$history];
+            $data['draftOptions']=[];$data['draftReview']=null;$data['draftError']=null;
+            $pending=$_SESSION['ai_draft']??null;
+            if(is_array($pending)&&($pending['expires']<=time()||$pending['user']!==(int)$user['id']||$pending['org']!==(int)$user['organization_id'])){unset($_SESSION['ai_draft']);$pending=null;}
+            if($selected&&in_array($policy['model'],$models,true)){
+                $data['draftOptions']=aiDraftOptions($db,$user,(int)$selected['id'],$cfg);
+                if(is_array($pending)&&$pending['project']===(int)$selected['id']){try{$data['draftReview']=aiDraftReview($db,$user,(int)$selected['id'],$pending,$cfg);}catch(Problem $e){$data['draftError']=$e->getMessage();if($e->status!==403)unset($_SESSION['ai_draft']);}}
+            };break;
         case 'reliability':
             if(!mfaFresh())throw new Problem('Подтвердите второй фактор.',403);$data=relPage($db,$user,$projectId,optionalId($_GET['before']??''));break;
         case 'incidents':

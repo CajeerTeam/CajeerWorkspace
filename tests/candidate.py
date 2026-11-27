@@ -31,7 +31,7 @@ class CandidateTests(unittest.TestCase):
         cls.keysha=recovery.digest(cls.pub); candidate.sign(cls.new,cls.key,cls.sig)
         cls.old=Path(os.environ['WORKSPACE_PREVIOUS_RELEASE']).resolve() if os.getenv('WORKSPACE_PREVIOUS_RELEASE') else None
         env=dict(os.environ,WORKSPACE_DB='sqlite'); cls.native=subprocess.run(['php',str(ROOT/'bin/workspace'),'doctor'],env=env,capture_output=True).returncode==0
-        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.3.0 release required')
+        if os.getenv('WORKSPACE_CANDIDATE_REQUIRE_NATIVE')=='1' and (not cls.native or not cls.old): raise RuntimeError('Native PHP runtime and actual 1.3.1 release required')
 
     def setUp(self):
         self.t=tempfile.TemporaryDirectory(dir=self.base); self.addCleanup(self.t.cleanup); self.root=Path(self.t.name)
@@ -88,12 +88,8 @@ class CandidateTests(unittest.TestCase):
 
     def test_switch_and_rollback(self):
         managed,data,objects,db,backup,sha=self.fixture()
-        def migrate(folder,version,env,upgrade=False):
-            if upgrade and version==candidate.NEW:
-                with closing(sqlite3.connect(db)) as c,c:
-                    if c.execute('PRAGMA user_version').fetchone()[0]==candidate.OLD_SCHEMA:
-                        sql=ROOT/'database/037.sql';c.executescript(sql.read_text());c.execute('INSERT INTO schema_migrations(version,sha256,origin) VALUES(?,?,?)',(37,recovery.digest(sql),'applied'));c.execute('PRAGMA user_version=37')
-        with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',side_effect=migrate):
+        # No migration in this release; only the native PHP smoke is substituted.
+        with patch.dict(os.environ,{'WORKSPACE_RECOVERY_OFFLINE':'1','WORKSPACE_DB':'sqlite'}),patch.object(candidate,'smoke',return_value=None):
             result=candidate.switch(managed,candidate.NEW,backup,sha,data,objects)
             self.assertTrue(result['snapshot_match']); self.assertEqual(candidate.pointer(managed),candidate.NEW)
             # A separately reviewed restore is required before old code can be selected.

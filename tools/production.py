@@ -18,11 +18,11 @@ import release
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
 REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json')
-VERSION = '1.3.1'
-PREVIOUS = '1.3.0'
+VERSION = '1.3.2'
+PREVIOUS = '1.3.1'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
-CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy')
+CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy', 'assistant_confirmed_drafts')
 CI = ('verify', 'postgres', 'bots-compatibility', 'recovery-postgres', 'release-rehearsal', 'package')
 MAX_JSON = 1024 * 1024
 require = recovery.require

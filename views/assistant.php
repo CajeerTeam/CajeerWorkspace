@@ -1,6 +1,6 @@
 <?php namespace Workspace; ?>
 <section class="panel"><div class="panelhead"><h2>Выберите один проект</h2></div>
-<p class="inset">Ассистент читает разрешённые данные одного проекта. Данные проекта не изменяются. В OpenAI передаются вопрос и ограниченная выборка; не вводите секреты или персональные данные. Финансовый, клиентский и юридический контекст требует свежего MFA. История ответов сохраняется только по политике организации.</p>
+<p class="inset">Ассистент читает разрешённые данные одного проекта. Обычные вопросы не изменяют данные проекта. Черновики применяются только после отдельного подтверждения. В OpenAI передаются вопрос и ограниченная выборка; не вводите секреты или персональные данные. Финансовый, клиентский и юридический контекст требует свежего MFA. История ответов сохраняется только по политике организации.</p>
 <?php if(!$projects): ?><p class="empty">Нет доступных пилотных проектов.</p><?php else: ?>
 <form method="get" class="inline inset"><input type="hidden" name="p" value="assistant"><label>Проект<select name="project" required><option value="">Выберите проект</option><?php selectOptions($projects,$selected['id']??null) ?></select></label><button class="secondary">Выбрать</button></form>
 <?php endif ?></section>
@@ -25,3 +25,5 @@
 </section><?php endif ?>
 
 <?php if(!empty($history)): ?><section class="panel"><div class="panelhead"><h2>Моя история по проекту</h2></div><?php foreach($history as $item): ?><details class="inset"><summary><?= h(gmdate('Y-m-d H:i:s',$item['observed'])) ?> UTC</summary><p><?= nl2br(h($item['answer']),false) ?></p><?php foreach($item['links'] as $source): ?><p><a href="<?= h($source['href']) ?>">[<?= h($source['ref']) ?>] <?= h($source['title']) ?></a></p><?php if(in_array($source['kind'],AI_SENSITIVE,true)): ?><?php foreach(aiFactLines($source['fields']) as [$label,$value]): ?><div class="splitrow"><span><?= h($label) ?></span><b><?= h($value) ?></b></div><?php endforeach ?><?php endif ?><?php endforeach ?></details><?php endforeach ?></section><?php endif ?>
+
+<?php if($selected && isset($draftOptions)) require ROOT.'/views/assistant_draft.php'; ?>

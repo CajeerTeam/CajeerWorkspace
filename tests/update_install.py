@@ -26,9 +26,9 @@ class InstallTests(unittest.TestCase):
     def setUpClass(cls):
         cls.t=tempfile.TemporaryDirectory(); cls.addClassCleanup(cls.t.cleanup); cls.base=Path(cls.t.name)
         actual=os.getenv('WORKSPACE_PREVIOUS_RELEASE')
-        cls.source_schema=36 if actual else 37
+        cls.source_schema=37
         current=(ROOT/'VERSION').read_text().strip()
-        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else '1.3.2'
+        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else '1.3.3'
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub'; cls.sig=cls.base/'sig'
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',cls.key],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',cls.key,'-pubout','-out',cls.pub],check=True,capture_output=True)
@@ -172,7 +172,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.run_action('install')['status'],'switched');self.assertTrue(self.journal()['pg_restore_verified'])
         self.assertEqual(self.run_action('finish')['status'],'completed');self.assertEqual(recovery.pg_snapshot(self.objects,self.data),before)
     def test_forward_schema(self):
-        # A separately signed future fixture exercises the migration path, not a production schema change in 1.3.1.
+        # A separately signed future fixture exercises the migration path, not a production schema change in 1.3.2.
         with zipfile.ZipFile(self.archive) as z: files={n:z.read(n) for n in z.namelist() if n!='SHA256SUMS'}
         files['app/Core.php']=files['app/Core.php'].replace(b'const SCHEMA_VERSION = 37;',b'const SCHEMA_VERSION = 38;')
         old_freeze=release.sha(files['database/schema-freeze.json']); freeze=json.loads(files['database/schema-freeze.json']);freeze['schema']=38
