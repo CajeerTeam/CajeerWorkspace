@@ -25,7 +25,7 @@ class Updates(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory(); cls.addClassCleanup(cls.tmp.cleanup)
         cls.base=Path(cls.tmp.name); cls.previous=release.build(cls.base/'previous')
-        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.7.1'; cls.schema=50
+        cls.current=(ROOT/'VERSION').read_text().strip(); cls.version='1.7.2'; cls.schema=50
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub';
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',str(cls.key)],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',str(cls.key),'-pubout','-out',str(cls.pub)],check=True,capture_output=True)

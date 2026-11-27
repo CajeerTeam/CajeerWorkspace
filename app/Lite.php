@@ -17,8 +17,8 @@ function liteTargets(): array {
     if(!is_array($data)||count($data)>100)throw new Problem('Некорректная конфигурация Lite.',503);
     $out=[];$roots=[];$origins=[];
     foreach($data as $key=>$row){
-        if(!is_string($key)||!preg_match('/\A[a-z][a-z0-9_-]{0,47}\z/D',$key)||!is_array($row)||!is_string($row['root']??null)||!preg_match('~\A/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\z~D',$row['root'])||!is_int($row['organization_id']??null)||$row['organization_id']<1||!is_int($row['project_id']??null)||$row['project_id']<1||!is_string($row['origin']??null)||($row['version']??null)!=='1.6.0')throw new Problem('Некорректная цель Lite.',503);
-        $origin=liteOrigin($row['origin']);if($origin!==$row['origin']||isset($roots[$row['root']])||isset($origins[$origin]))throw new Problem('Дублирующаяся или неканоническая цель Lite.',503);
+        if(!is_string($key)||!preg_match('/\A[a-z][a-z0-9_-]{0,47}\z/D',$key)||!is_array($row)||!is_string($row['root']??null)||!preg_match('~\A/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\z~D',$row['root'])||!is_int($row['organization_id']??null)||$row['organization_id']<1||!is_int($row['project_id']??null)||$row['project_id']<1||!is_string($row['origin']??null))throw new Problem('Некорректная цель Lite.',503);
+        editorialCapability('lite',$row['version']??null,'publish_locked');$origin=liteOrigin($row['origin']);if($origin!==$row['origin']||isset($roots[$row['root']])||isset($origins[$origin]))throw new Problem('Дублирующаяся или неканоническая цель Lite.',503);
         $roots[$row['root']]=true;$origins[$origin]=true;
         $c=['root'=>$row['root'],'organization_id'=>$row['organization_id'],'project_id'=>$row['project_id'],'origin'=>$origin,'version'=>'1.6.0'];
         $c['hash']=hash('sha256',json_encode($c,JSON_THROW_ON_ERROR));$out[$key]=$c;

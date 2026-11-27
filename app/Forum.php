@@ -19,8 +19,8 @@ function forumActor(PDO $db,array $u,int $project,string $right='connections'): 
 function forumConfig(PDO $db,array $u,string $key): array {
     if(!connectionAllowed($db,$u,$key))throw new Problem('Forum недоступен.',404);
     $c=connections()[$key]??null;
-    if(!$c||$c['type']!=='forum'||!$c['base']||$c['installed_version']!==FORUM_EDITION)throw new Problem('Настройте Forum Edition '.FORUM_EDITION.'.',409);
-    $c['origin']=engineOrigin($c['base']);return $c;
+    if(!$c||$c['type']!=='forum'||!$c['base'])throw new Problem('Настройте Forum Edition '.FORUM_EDITION.'.',409);
+    editorialCapability('forum',$c['installed_version']??null,'personal_acl');$c['origin']=engineOrigin($c['base']);return $c;
 }
 /** Explicit operator-owned mapping; never accept a token or principal from a browser form. */
 function forumIdentity(array $c,array $u): array {
@@ -59,7 +59,7 @@ function forumSession(PDO $db,array $u,string $key,?callable $transport=null): a
     $me=forumCall($c,'GET','/auth/me',null,$transport);
     if(($me['user_id']??null)!==$c['forum_actor']||!empty($me['suspended'])||!empty($me['session']))throw new Problem('Идентификатор Forum не совпадает.',403);
     $health=($transport??__NAMESPACE__.'\\forumHttp')($c,'GET','/api/v1/health',null);
-    if(($health['version']??null)!==FORUM_CORE||($health['edition_version']??null)!==FORUM_EDITION||($health['engine_api_version']??null)!=='1.1')throw new Problem('Несовместимая редакция или ядро Forum.',409);
+    editorialForumHealth($health);
     return $c;
 }
 function forumSource(PDO $db,array $u,int $project,int $source): array {
@@ -67,7 +67,14 @@ function forumSource(PDO $db,array $u,int $project,int $source): array {
 }
 function forumSourceSession(PDO $db,array $u,array $s,?callable $transport=null): array {
     if(!(int)$s['active'])throw new Problem('Forum недоступен.',404);
-    $cfg=forumConfig($db,$u,$s['connection_key']);if(!hash_equals($s['config_hash'],$cfg['hash']))throw new Problem('Конфигурация Forum изменилась.',409);return forumSession($db,$u,$s['connection_key'],$transport);
+    $cfg=forumConfig($db,$u,$s['connection_key']);if(!hash_equals($s['config_hash'],$cfg['hash']))throw new Problem('Конфигурация Forum изменилась.',409);$c=forumSession($db,$u,$s['connection_key'],$transport);forumSourceCurrent($db,$u,$s,$c);return $c;
+}
+/** Local access and personal identity must still match after a remote observation. */
+function forumSourceCurrent(PDO $db,array $u,array $s,array $c): void {
+    $u=forumActor($db,$u,(int)$s['project_id']);$fresh=forumSource($db,$u,(int)$s['project_id'],(int)$s['id']);
+    if(!(int)$fresh['active']||$fresh['config_hash']!==$s['config_hash']||$fresh['board_id']!==$s['board_id'])throw new Problem('Доступ Forum отозван.',403);
+    $cfg=forumConfig($db,$u,$s['connection_key']);if($cfg['hash']!==$c['hash'])throw new Problem('Конфигурация Forum изменилась.',409);
+    $identity=forumIdentity($cfg,$u);if($identity['forum_actor']!==$c['forum_actor']||!hash_equals($identity['token'],$c['token']))throw new Problem('Учётная запись Forum изменилась.',403);
 }
 function forumBoard(array $c,string $board,int $page=1,?callable $transport=null): array {
     $r=forumCall($c,'GET','/forum/boards/'.forumId($board).'?page='.max(1,min(100,$page)),null,$transport);
@@ -98,8 +105,8 @@ function forumTopicInsert(PDO $db,array $u,array $s,array $c,string $kind,int $t
     return insertId($db,'INSERT INTO forum_topics(project_id,source_id,task_id,release_id,thread_id,state,actor_id,forum_actor,created_at) VALUES(?,?,?,?,?,?,?,?,?)',[$s['project_id'],$s['id'],$kind==='task'?$target:null,$kind==='release'?$target:null,$thread,$state,$u['id'],$c['forum_actor'],time()]);
 }
 function forumAttach(PDO $db,array $u,int $project,int $source,string $kind,int $target,string $thread,?callable $transport=null):int {
-    $u=forumActor($db,$u,$project,'manage');$s=forumSource($db,$u,$project,$source);forumTarget($db,$project,$kind,$target);$c=forumSourceSession($db,$u,$s,$transport);forumThread($c,$s['board_id'],$thread,1,$transport);
-    return atomic($db,function()use($db,$u,$project,$s,$c,$kind,$target,$thread){$u=forumActor($db,$u,$project,'manage');$fresh=forumSource($db,$u,$project,(int)$s['id']);if(!(int)$fresh['active']||!connectionAllowed($db,$u,$s['connection_key']))throw new Problem('Forum недоступен.',404);forumTarget($db,$project,$kind,$target);$old=forumFindTarget($db,$s,$kind,$target);$duplicate=query($db,'SELECT id FROM forum_topics WHERE source_id=? AND thread_id=?',[$s['id'],$thread])->fetchColumn();if($duplicate!==false&&(!$old||(int)$duplicate!==(int)$old['id']))throw new Problem('Тема уже связана с другой карточкой.',409);if($old){if($old['state']==='linked'&&$old['thread_id']===$thread)return (int)$old['id'];if(!in_array($old['state'],['uncertain','rejected'],true))throw new Problem('Уже существует привязка или незавершённая отправка.',409);$id=(int)$old['id'];query($db,"UPDATE forum_topics SET thread_id=?,state='linked' WHERE id=?",[$thread,$id]);}else $id=forumTopicInsert($db,$u,$s,$c,$kind,$target,$thread,'linked');auditEvent($db,$u,$project,'forum.attach',$id);return $id;});
+    $u=forumActor($db,$u,$project,'manage');$s=forumSource($db,$u,$project,$source);forumTarget($db,$project,$kind,$target);$c=forumSourceSession($db,$u,$s,$transport);editorialCapability('forum',$c['installed_version'],'recover_exact');$observed=forumThread($c,$s['board_id'],$thread,1,$transport);
+    return atomic($db,function()use($db,$u,$project,$s,$c,$kind,$target,$thread,$observed){forumSourceCurrent($db,$u,$s,$c);editorialValidateAttachment($db,$u,$s,$kind,$target,$c,$observed);$u=forumActor($db,$u,$project,'manage');$fresh=forumSource($db,$u,$project,(int)$s['id']);if(!(int)$fresh['active']||!connectionAllowed($db,$u,$s['connection_key']))throw new Problem('Forum недоступен.',404);forumTarget($db,$project,$kind,$target);$old=forumFindTarget($db,$s,$kind,$target);$duplicate=query($db,'SELECT id FROM forum_topics WHERE source_id=? AND thread_id=?',[$s['id'],$thread])->fetchColumn();if($duplicate!==false&&(!$old||(int)$duplicate!==(int)$old['id']))throw new Problem('Тема уже связана с другой карточкой.',409);if($old){if($old['state']==='linked'&&$old['thread_id']===$thread)return (int)$old['id'];if(!in_array($old['state'],['uncertain','rejected'],true))throw new Problem('Уже существует привязка или незавершённая отправка.',409);$id=(int)$old['id'];query($db,"UPDATE forum_topics SET thread_id=?,state='linked' WHERE id=?",[$thread,$id]);}else $id=forumTopicInsert($db,$u,$s,$c,$kind,$target,$thread,'linked');auditEvent($db,$u,$project,'forum.attach',$id);return $id;});
 }
 function forumRequestHash(string $op,array $payload):string{return hash('sha256',json_encode([$op,$payload],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE));}
 function forumPrior(PDO $db,array $u,string $key,array $s,string $op,string $hash):array|false {
@@ -117,16 +124,18 @@ function forumFinish(PDO $db,array $u,array $s,int $topic,int $op,string $action
 }
 function forumSend(PDO $db,array $u,array $s,array $c,int $topic,int $op,string $action,string $path,array $payload,?callable $transport=null):void {
     $state='uncertain';$remote=null;$received=false;
-    try{$right=in_array($action,['create','lock','unlock','pin','unpin'],true)?'manage':'work';$u=forumActor($db,$u,(int)$s['project_id'],$right);$fresh=forumSource($db,$u,(int)$s['project_id'],(int)$s['id']);if(!(int)$fresh['active']||forumConfig($db,$u,$s['connection_key'])['hash']!==$s['config_hash'])throw new Problem('Доступ отозван.',403);$identity=forumIdentity($c,$u);if($identity['forum_actor']!==$c['forum_actor']||!hash_equals($identity['token'],$c['token']))throw new Problem('Учётная запись Forum изменилась.',403);$r=forumCall($c,in_array($action,['watch','unwatch'],true)?'PUT':'POST',$path,$payload,$transport);$received=true;$state=($r['pending_review']??false)===true?'pending':'accepted';
+    try{$right=in_array($action,['create','lock','unlock','pin','unpin'],true)?'manage':'work';$u=forumActor($db,$u,(int)$s['project_id'],$right);$fresh=forumSource($db,$u,(int)$s['project_id'],(int)$s['id']);if(!(int)$fresh['active']||forumConfig($db,$u,$s['connection_key'])['hash']!==$s['config_hash'])throw new Problem('Доступ отозван.',403);$identity=forumIdentity($c,$u);if($identity['forum_actor']!==$c['forum_actor']||!hash_equals($identity['token'],$c['token']))throw new Problem('Учётная запись Forum изменилась.',403);if($action==='create'){$t=forumTopic($db,$s,$topic);if($t['release_id']!==null)editorialForumReservation($db,$u,(int)$s['project_id'],(int)$s['id'],'release',(int)$t['release_id'],entity($db,'SELECT request_key FROM forum_operations WHERE id=?',[$op])['request_key'],forumRequestHash('create',['release',(int)$t['release_id'],$payload]));}$r=forumCall($c,in_array($action,['watch','unwatch'],true)?'PUT':'POST',$path,$payload,$transport);$received=true;$state=($r['pending_review']??false)===true?'pending':'accepted';
         if($state==='pending'&&!in_array($action,['create','reply'],true))throw new Problem('Неожиданный ответ.',503);if($state==='pending')$remote=forumId($r['submission_id']??null);elseif(!in_array($action,['watch','unwatch'],true)){$remote=forumId($r['id']??null);if(in_array($action,['lock','unlock','pin','unpin'],true)&&$path!=='/forum/threads/'.$remote.'/moderate')throw new Problem('Неожиданный ответ.',503);if($action==='reply'&&$path!=='/forum/threads/'.forumId($r['thread_id']??null).'/posts')throw new Problem('Неожиданный ответ.',503);}elseif(($r['enabled']??null)!==($action==='watch'))throw new Problem('Неожиданный ответ.',503);
     }catch(Problem $e){$state=!$received&&in_array($e->status,[400,401,403,404,409,422,429],true)?'rejected':'uncertain';$remote=null;}catch(\Throwable){$state='uncertain';}
     forumFinish($db,$u,$s,$topic,$op,$action,$state,$remote);
 }
-function forumCreate(PDO $db,array $u,int $project,int $source,string $kind,int $target,string $key,string $title,string $body,?callable $transport=null,bool $retryRejected=false):int {
+function forumCreate(PDO $db,array $u,int $project,int $source,string $kind,int $target,string $key,string $title,string $body,?callable $transport=null,bool $retryRejected=false,?callable $engineTransport=null):int {
     $u=forumActor($db,$u,$project,'manage');$s=forumSource($db,$u,$project,$source);forumTarget($db,$project,$kind,$target);$c=forumSourceSession($db,$u,$s,$transport);$b=forumBoard($c,$s['board_id'],1,$transport);
-    $title=word($title,180,'Название');if(preg_match_all('/./us',$title)<3)throw new Problem('Название от 3 символов.',422);$payload=['title'=>$title,'body'=>forumBody($body),'body_format'=>'plain','kind'=>'discussion'];$hash=forumRequestHash('create',[$kind,$target,$payload]);
+    editorialCapability('forum',$c['installed_version'],'create');forumSourceCurrent($db,$u,$s,$c);$title=word($title,180,'Название');if(preg_match_all('/./us',$title)<3)throw new Problem('Название от 3 символов.',422);$payload=['title'=>$title,'body'=>forumBody($body),'body_format'=>'plain','kind'=>'discussion'];$hash=forumRequestHash('create',[$kind,$target,$payload]);
     if($old=forumPrior($db,$u,$key,$s,'create',$hash))return (int)$old['topic_id'];
     if(($b['board']['permissions']['thread:create']??false)!==true)throw new Problem('Forum запрещает создание темы.',403);
+    if($kind==='release'&&($route=query($db,'SELECT * FROM editorial_releases WHERE project_id=? AND release_id=? AND forum_source_id=? AND abandoned_at IS NULL',[$project,$target,$source])->fetch())){editorialForumReservation($db,$u,$project,$source,$kind,$target,$key,$hash);editorialCmsFresh($db,$u,$route,$engineTransport);}
+    forumSourceCurrent($db,$u,$s,$c);
     [$topic,$op]=atomic($db,function()use($db,$u,$project,$s,$c,$kind,$target,$key,$hash,$retryRejected){$u=forumActor($db,$u,$project,'manage');$fresh=forumSource($db,$u,$project,(int)$s['id']);if(!(int)$fresh['active']||!connectionAllowed($db,$u,$s['connection_key']))throw new Problem('Forum недоступен.',404);forumTarget($db,$project,$kind,$target);editorialForumReservation($db,$u,$project,(int)$s['id'],$kind,$target,$key,$hash);if($old=forumPrior($db,$u,$key,$s,'create',$hash))return [(int)$old['topic_id'],null];if($existing=forumFindTarget($db,$s,$kind,$target)){if(!$retryRejected||$existing['state']!=='rejected'||$existing['thread_id']!==null||(int)$existing['actor_id']!==(int)$u['id']||$existing['forum_actor']!==$c['forum_actor'])throw new Problem('Тема уже зарегистрирована. Не повторяйте отправку; используйте сверку.',409);$topic=(int)$existing['id'];query($db,"UPDATE forum_topics SET state='sending',submission_id=NULL WHERE id=?",[$topic]);}else $topic=forumTopicInsert($db,$u,$s,$c,$kind,$target,null,'sending');return [$topic,forumReserve($db,$u,$s,$c,$topic,$key,'create',$hash)];});
     if($op!==null)forumSend($db,$u,$s,$c,$topic,$op,'create','/forum/boards/'.$s['board_id'].'/threads',$payload,$transport);return $topic;
 }
@@ -141,14 +150,14 @@ function forumAction(PDO $db,array $u,int $project,int $source,int $topic,string
     $id=atomic($db,function()use($db,$u,$project,$right,$s,$c,$topic,$key,$op,$hash){$u=forumActor($db,$u,$project,$right);$fresh=forumSource($db,$u,$project,(int)$s['id']);if(!(int)$fresh['active']||!connectionAllowed($db,$u,$s['connection_key']))throw new Problem('Forum недоступен.',404);if(forumPrior($db,$u,$key,$s,$op,$hash))return null;return forumReserve($db,$u,$s,$c,$topic,$key,$op,$hash);});if($id!==null)forumSend($db,$u,$s,$c,$topic,$id,$op,$path,$payload,$transport);
 }
 function forumReconcile(PDO $db,array $u,int $project,int $source,int $topic,?callable $transport=null):void {
-    $u=forumActor($db,$u,$project,'manage');$s=forumSource($db,$u,$project,$source);$c=forumSourceSession($db,$u,$s,$transport);forumBoard($c,$s['board_id'],1,$transport);$t=forumTopic($db,$s,$topic);
+    $u=forumActor($db,$u,$project,'manage');$s=forumSource($db,$u,$project,$source);$c=forumSourceSession($db,$u,$s,$transport);forumBoard($c,$s['board_id'],1,$transport);editorialCapability('forum',$c['installed_version'],'moderation');$t=forumTopic($db,$s,$topic);
     if((int)$t['actor_id']!==(int)$u['id']||$c['forum_actor']!==$t['forum_actor'])throw new Problem('Сверку выполняет автор запроса.',403);
     if($t['state']==='sending'){atomic($db,function()use($db,$u,$s,$topic){$op=query($db,"SELECT id,created_at FROM forum_operations WHERE topic_id=? AND operation='create' AND state='sending' ORDER BY id DESC LIMIT 1",[$topic])->fetch();if(!$op||time()-(int)$op['created_at']<=60)throw new Problem('Отправка ещё выполняется.',409);query($db,"UPDATE forum_topics SET state='uncertain' WHERE id=? AND state='sending'",[$topic]);query($db,"UPDATE forum_operations SET state='uncertain',updated_at=? WHERE id=? AND state='sending'",[time(),$op['id']]);auditEvent($db,$u,(int)$s['project_id'],'forum.reconcile',$topic,'uncertain');});return;}
     if($t['state']!=='pending')throw new Problem('Для неопределённого запроса проверьте Forum и вручную привяжите найденную тему.',409);
     $found=null;for($page=1;$page<=5;$page++){$rows=forumCall($c,'GET','/forum/submissions?page='.$page,null,$transport);foreach($rows as $r)if(($r['id']??null)===$t['submission_id']){$found=$r;break 2;}if(count($rows)<25)break;}
     if(!$found||($found['board_id']??null)!==$s['board_id']||($found['author_id']??null)!==$c['forum_actor'])throw new Problem('Заявка недоступна. Проверьте её в Forum.',404);
     $state=$found['status']??null;if($state==='pending')return;$remote=null;if($state==='approved'){$remote=forumId($found['result_id']??null);forumThread($c,$s['board_id'],$remote,1,$transport);$status='linked';}elseif(in_array($state,['rejected','cancelled'],true))$status='rejected';else throw new Problem('Неизвестное состояние заявки.',409);
-    atomic($db,function()use($db,$u,$s,$topic,$status,$remote,$t){$changed=query($db,"UPDATE forum_topics SET state=?,thread_id=? WHERE id=? AND state='pending' AND submission_id=?",[$status,$remote,$topic,$t['submission_id']])->rowCount();if(!$changed)return;auditEvent($db,$u,(int)$s['project_id'],'forum.reconcile',$topic,$status);});
+    atomic($db,function()use($db,$u,$s,$topic,$status,$remote,$t,$c){forumSourceCurrent($db,$u,$s,$c);$changed=query($db,"UPDATE forum_topics SET state=?,thread_id=? WHERE id=? AND state='pending' AND submission_id=?",[$status,$remote,$topic,$t['submission_id']])->rowCount();if(!$changed)return;auditEvent($db,$u,(int)$s['project_id'],'forum.reconcile',$topic,$status);});
 }
 /** No remote content, board names or counts are retained in the database. */
 function forumPage(PDO $db,array $u,?int $project,array $args,?callable $transport=null):array {
@@ -167,6 +176,7 @@ function forumPage(PDO $db,array $u,?int $project,array $args,?callable $transpo
             elseif((int)$t['actor_id']===(int)$u['id']&&$t['forum_actor']===$c['forum_actor'])$pending=['id'=>$t['id'],'state'=>$t['state'],'task_id'=>$t['task_id'],'release_id'=>$t['release_id']];else throw new Problem('Тема Forum недоступна.',404);}
         if(!$detail&&!$pending){$ownPending=query($db,"SELECT id,state,task_id,release_id FROM forum_topics WHERE source_id=? AND actor_id=? AND forum_actor=? AND state<>'linked' ORDER BY id DESC LIMIT 20",[$s['id'],$u['id'],$c['forum_actor']])->fetchAll();$remote=$b['threads'];if($term!==''){$remote=forumCall($c,'GET','/forum/search?'.http_build_query(['q'=>$term,'mode'=>'threads','board_id'=>$s['board_id'],'page'=>$n],'','&',PHP_QUERY_RFC3986),null,$transport);}
             $ids=array_values(array_filter(array_column(array_slice($remote,0,25),'id'),fn($v)=>is_string($v)&&preg_match('/\A[a-f0-9-]{36}\z/D',$v)));$local=$ids?query($db,"SELECT id,thread_id,task_id,release_id FROM forum_topics WHERE source_id=? AND state='linked' AND thread_id IN (".implode(',',array_fill(0,count($ids),'?')).')',[$s['id'],...$ids])->fetchAll():[];$byId=array_column($local,null,'thread_id');foreach($remote as $r){$rid=$r['id']??null;if(!is_string($rid)||!isset($byId[$rid])||($term===''&&($r['board_id']??null)!==$s['board_id'])||(isset($r['board_id'])&&$r['board_id']!==$s['board_id']))continue;$rows[]=['local'=>$byId[$rid],'title'=>$r['title']??'Тема','locked'=>$r['locked']??0,'pinned'=>$r['pinned']??0];}}
+        forumSourceCurrent($db,$u,$s,$c);
         }catch(Problem $e){$source=$board=$detail=$pending=null;$rows=$participants=$operations=$ownPending=[];$error='Раздел, тема или подключение недоступны. Проверьте права Forum и Workspace.';}}
     return compact('projects','project','sources','available','rows','participants','operations','source','board','detail','pending','ownPending','error','manage','work','n','kind','target','term','offset');
 }

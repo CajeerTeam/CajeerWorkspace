@@ -16,8 +16,8 @@ function engineOrigin(string $base): string {
     return $scheme.'://'.strtolower($p['host']).(($scheme==='https'&&$port===443||$scheme==='http'&&$port===80)?'':':'.$port);
 }
 function engineConfig(array $c): array {
-    if(($c['type']??null)!=='engine'||empty($c['base'])||empty($c['env'])||($c['installed_version']??null)!=='2.1.0')throw new Problem('Настройте Engine 2.1.0 и secret_env в конфигурации подключения.',409);
-    $c['origin']=engineOrigin($c['base']);return $c;
+    if(($c['type']??null)!=='engine'||empty($c['base'])||empty($c['env']))throw new Problem('Настройте Engine 2.1.0 и secret_env в конфигурации подключения.',409);
+    editorialCapability('engine',$c['installed_version']??null,'publish_cas');$c['origin']=engineOrigin($c['base']);return $c;
 }
 function engineHttp(array $c,string $method,string $path,?array $body=null): array {
     $token=getenv($c['env']);if(!is_string($token)||strlen($token)<16||strlen($token)>4096||preg_match('/[^\x21-\x7e]/',$token))throw new Problem('API token Engine не настроен.',503);
@@ -33,6 +33,7 @@ function engineHttp(array $c,string $method,string $path,?array $body=null): arr
     if(!is_array($out)||array_is_list($out))throw new Problem('Некорректный объект Engine.',503);return $out;
 }
 function engineCall(array $c,string $method,string $path,?array $body=null,?callable $transport=null): array {
+    editorialCapability('engine',$c['installed_version']??null,$method==='PATCH'?'publish_cas':(str_ends_with($path,'/revisions')?'revisions':'read'));
     $r=($transport??__NAMESPACE__.'\\engineHttp')($c,$method,$path,$body);
     if(!is_array($r)||!is_array($r['data']??null))throw new Problem('Некорректный ответ Engine.',503);return $r;
 }
@@ -112,7 +113,7 @@ function engineConfirm(PDO $db,array $u,int $project,int $id,string $hash,?calla
 }
 function engineReconcile(PDO $db,array $u,int $project,int $id,?callable $transport=null): string {
     requireProjectRight($db,$u,$project,'manage');$p=enginePublication($db,$u,$project,$id);if(!in_array($p['state'],['sending','uncertain','published','observed'],true))throw new Problem('Сверка не применима.',409);if($p['state']==='sending'&&(int)$p['attempted_at']>time()-120)throw new Problem('Дождитесь завершения отправки (до 2 минут).',409);
-    $c=engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));$expected=engineExpected($p);$current=engineEntry($c,$p['content_type'],$p['entry_id'],$transport);$matches=engineHash($current)===engineHash($expected);$seen=$matches;
+    $c=engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));editorialCapability('engine',$c['installed_version'],'reconcile');$expected=engineExpected($p);$current=engineEntry($c,$p['content_type'],$p['entry_id'],$transport);$matches=engineHash($current)===engineHash($expected);$seen=$matches;
     if(!$seen&&!in_array($p['state'],['published','observed'],true)){$history=engineRevisions($c,$p['content_type'],$p['entry_id'],$transport);$snap=$history[$expected['revision']]??null;$seen=$snap!==null&&engineHash($snap)===engineHash($expected);}
     $url=null;if($matches){try{$url=engineFindUrl($c,$p['content_type'],$p['entry_id'],$expected,$transport);}catch(\Throwable){}}
     return atomic($db,function()use($db,$u,$project,$p,$c,$seen,$url,$matches,$expected){$u=organizationUser($db,$u);requireProjectRight($db,$u,$project,'manage');$fresh=enginePublication($db,$u,$project,(int)$p['id']);if($fresh['state']!==$p['state']||(int)$fresh['updated_at']!==(int)$p['updated_at']||engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']))['hash']!==$c['hash'])throw new Problem('Состояние изменилось.',409);
@@ -127,14 +128,15 @@ function enginePage(PDO $db,array $u,?int $project,array $args,?callable $transp
     $canPublish=$project!==null&&roleAllows(projectRole($db,$u,$project),'manage');$available=[];
     if($project!==null&&$u['role']==='owner'){foreach(connections() as $key=>$c)if($c['type']==='engine'&&$c['configured']&&connectionAllowed($db,$u,$key)){try{engineConfig($c);$available[$key]=$c['label'];}catch(Problem){}}}
     $site=null;$types=[];$items=[];$total=0;$preview=null;$history=[];$publication=null;$error=null;$type='';$entry='';$offset=0;$q='';$publications=[];
-    if($project!==null){$publications=query($db,'SELECT * FROM engine_publications WHERE project_id=? ORDER BY id DESC LIMIT 50',[$project])->fetchAll();
-        if(isset($args['publication'])&&$args['publication']!==''){$publication=enginePublication($db,$u,$project,numberId($args['publication']));$site=engineSite($db,$u,$project,(int)$publication['site_id']);}
+    if($project!==null){$publications=array_values(array_filter(query($db,'SELECT * FROM engine_publications WHERE project_id=? ORDER BY id DESC LIMIT 50',[$project])->fetchAll(),function($p)use($db,$u,$project){try{engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));return true;}catch(Problem){return false;}}));
+        if(isset($args['publication'])&&$args['publication']!==''){$publication=enginePublication($db,$u,$project,numberId($args['publication']));$site=engineSite($db,$u,$project,(int)$publication['site_id']);engineSiteConfig($db,$u,$site);}
         elseif(isset($args['site'])&&$args['site']!=='')$site=engineSite($db,$u,$project,numberId($args['site']));
         if($site&&!$publication){try{$c=engineSiteConfig($db,$u,$site);$types=engineTypes($c,$transport);$type=($args['type']??'')===''?'':engineSegment($args['type']);if($type!==''&&!isset($types[$type]))throw new Problem('Тип отсутствует в каталоге.',404);
             if($type!==''){$q=word($args['q']??'',128,'Поиск',false);$offset=isset($args['offset'])?numberId($args['offset'])-1:0;$list=engineList($c,$type,$offset,$q,$transport);$items=$list['items'];$total=$list['total'];
                 if(($args['entry']??'')!==''){$entry=engineSegment($args['entry']);$current=engineEntry($c,$type,$entry,$transport);$history=engineRevisions($c,$type,$entry,$transport);$revision=isset($args['revision'])?numberId($args['revision']):$current['revision'];$preview=$revision===$current['revision']?$current:($history[$revision]??throw new Problem('Редакция недоступна.',404));$preview=['snapshot'=>$preview,'hash'=>engineHash($preview),'publishable'=>$revision===$current['revision']&&$preview['status']==='draft'];}
             }
         }catch(Problem $e){$error=$e->getMessage();}}
+        if($site&&($preview!==null||$publication!==null||$items||$types)){engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$site['id']));}
     }
     return compact('projects','project','sites','site','available','canPublish','types','type','items','total','preview','history','publication','publications','error','entry','offset','q');
 }

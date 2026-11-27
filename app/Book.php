@@ -18,8 +18,8 @@ function bookKey(mixed $v): string {
     foreach(explode('/',$v) as $part)bookSlug($part);return $v;
 }
 function bookConfig(array $c): array {
-    if(($c['type']??null)!=='book'||empty($c['base'])||($c['installed_version']??null)!=='1.2.0'||!empty($c['env']))throw new Problem('Настройте публичный Reader Book 1.2.0.',409);
-    $p=parse_url($c['base']);$path=$p['path']??'';
+    if(($c['type']??null)!=='book'||empty($c['base'])||!empty($c['env']))throw new Problem('Настройте публичный Reader Book 1.2.0.',409);
+    editorialCapability('book',$c['installed_version']??null,'snapshot');$p=parse_url($c['base']);$path=$p['path']??'';
     if(!preg_match('~\A(?:/w/[a-f0-9]{32}/[a-f0-9]{32})?\z~D',$path))throw new Problem('Book: допустим origin или /w/ORG_ID/WORKSPACE_ID.',409);
     $origin=engineOrigin(substr($c['base'],0,strlen($c['base'])-strlen($path)));
     $c['reader']=$origin.$path;return $c;
@@ -46,11 +46,13 @@ function bookMeta(array $p): array {
     return ['id'=>$p['id'],'title'=>bookText($p['title']??null,200),'section'=>bookText($p['section']??null,100,true),'order'=>$p['order'],'locale'=>$p['locale'],'updated'=>bookText($p['updated']??null,80),'media'=>$media];
 }
 function bookCatalog(array $c,string $scope,?callable $transport=null): array {
+    editorialCapability('book',$c['installed_version']??null,'read');
     $rows=($transport??__NAMESPACE__.'\\bookHttp')($c,'/pages');
     if(!is_array($rows)||count($rows)>1000||($rows!==[]&&array_is_list($rows)))throw new Problem('Некорректный каталог Book.',503);
     $out=[];foreach($rows as $key=>$p){if(!is_string($key)||!str_starts_with($key,$scope.'/'))continue;bookKey($key);if(!is_array($p))throw new Problem('Некорректная страница Book.',503);$out[$key]=bookMeta($p);}return $out;
 }
 function bookRead(array $c,string $key,?callable $transport=null): array {
+    editorialCapability('book',$c['installed_version']??null,'read');
     $p=($transport??__NAMESPACE__.'\\bookHttp')($c,'/pages/'.bookKey($key));
     if(!is_array($p))throw new Problem('Некорректная страница Book.',503);
     return bookMeta($p)+['body'=>bookText($p['body']??null,262144,true)];
@@ -137,6 +139,7 @@ function bookPage(PDO $db,array $u,?int $project,array $args,?callable $transpor
         if(($args['edition']??'')!==''){$edition=bookEdition($db,$u,$project,numberId($args['edition']));$source=bookSource($db,$u,$project,(int)$edition['source_id']);$snapshot=json_decode($edition['snapshot'],true,64,JSON_THROW_ON_ERROR);$reviews=bookReviews($db,$edition);$state=bookReviewState($edition,$reviews);$links=query($db,'SELECT * FROM book_release_links WHERE project_id=? AND edition_id=? ORDER BY id',[$project,$edition['id']])->fetchAll();if($manage&&$state==='approved')$releases=query($db,"SELECT id,tag,commit_sha FROM project_releases WHERE project_id=? AND state='confirmed' ORDER BY id DESC LIMIT 100",[$project])->fetchAll();}
         elseif(($args['source']??'')!=='')$source=bookSource($db,$u,$project,numberId($args['source']));
         if($source){try{$c=bookSourceConfig($db,$u,$source);$editions=query($db,'SELECT id,title,snapshot_hash,created_at FROM book_editions WHERE project_id=? AND source_id=? ORDER BY id DESC LIMIT 100',[$project,$source['id']])->fetchAll();if(!$edition){$catalog=bookCatalog($c,$source['scope'],$transport);if(($args['page_key']??'')!==''){$k=bookKey($args['page_key']);if(!isset($catalog[$k]))throw new Problem('Страница недоступна в Reader.',404);$preview=['key'=>$k,'page'=>bookRead($c,$k,$transport)];}}}catch(Problem $e){$error=$e->getMessage();}}
+        if($source&&($edition!==null||$preview!==null||$catalog||$editions))bookSourceConfig($db,$u,bookSource($db,$u,$project,(int)$source['id']));
         if($write&&!$edition)foreach(query($db,'SELECT u.id,u.name FROM users u JOIN organization_members m ON m.user_id=u.id WHERE m.organization_id=? AND u.enabled=1 ORDER BY u.name,u.id',[$u['organization_id']])->fetchAll() as $p){if((int)$p['id']===(int)$u['id'])continue;try{bookReviewer($db,$u,$project,(int)$p['id']);$people[]=$p;}catch(Problem){}}
     }
     return compact('projects','project','sources','available','catalog','editions','reviews','people','releases','links','source','edition','snapshot','preview','error','write','manage','state');

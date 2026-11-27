@@ -12,11 +12,11 @@ use CajeerEngine\Auth\SessionRegistry;
 /** CLI only; runs on the CMS host under a dedicated OS account with native storage permissions. */
 function liteNative(array $c,callable $fn): mixed {
     if(PHP_SAPI!=='cli')throw new Problem('Lite worker доступен только CLI.',403);
-    $root=$c['root'];if(realpath($root)!==$root||!is_dir($root)||is_link($root)||!is_file($root.'/VERSION')||is_link($root.'/VERSION')||trim((string)file_get_contents($root.'/VERSION'))!=='1.6.0'||!is_file($root.'/bootstrap.php')||is_link($root.'/bootstrap.php'))throw new Problem('Требуется установленный Lite 1.6.0 без symlink корня.',409);
+    $profile=editorialCapability('lite',$c['version']??null,'publish_locked');$root=$c['root'];if(realpath($root)!==$root||!is_dir($root)||is_link($root)||!is_file($root.'/VERSION')||is_link($root.'/VERSION')||trim((string)file_get_contents($root.'/VERSION'))!==$profile['version']||!is_file($root.'/bootstrap.php')||is_link($root.'/bootstrap.php'))throw new Problem('Требуется установленный Lite 1.6.0 без symlink корня.',409);
     // One installation per process: autoloaders must never resolve classes from another root.
     static $loaded=null;if($loaded!==null&&$loaded!==$root)throw new Problem('Один корень Lite на процесс.',409);
     if($loaded===null){require_once $root.'/bootstrap.php';$loaded=$root;}
-    if(NativeLite::VERSION!=='1.6.0'||SiteState::SCHEMA!==14||!str_starts_with((string)(new \ReflectionClass(NativeLite::class))->getFileName(),$root.'/core/'))throw new Problem('Несовместимое ядро Lite.',409);
+    if(NativeLite::VERSION!==$profile['version']||SiteState::SCHEMA!==$profile['schema']||!str_starts_with((string)(new \ReflectionClass(NativeLite::class))->getFileName(),$root.'/core/'))throw new Problem('Несовместимое ядро Lite.',409);
     $lock=OperationLock::acquire($root,true);
     try{if(OperationLock::maintenance($root)||RecoveryJournal::pending($root))throw new Problem('В Lite выполняется обслуживание или recovery.',409);
         return $fn(new SiteRepository($root),$root);
@@ -36,7 +36,7 @@ function liteCatalog(array $state): array {
     $out=[];foreach($state['pages'] as $path=>$page)$out[$path]=['title'=>$page['title'],'published'=>$page['published'],'revision'=>PagesManagement::revision($page),'body'=>$page['body']];return $out;
 }
 function liteInspect(PDO $db,int $site,int $owner): array {
-    $s=entity($db,'SELECT * FROM lite_sites WHERE id=?',[$site]);$u=orgOwner($db,['id'=>$owner,'organization_id'=>$s['organization_id']]);$p=(int)$s['project_id'];allowedProject($db,$u,$p);$c=liteConfig($s);
+    $s=entity($db,'SELECT * FROM lite_sites WHERE id=?',[$site]);$u=orgOwner($db,['id'=>$owner,'organization_id'=>$s['organization_id']]);$p=(int)$s['project_id'];allowedProject($db,$u,$p);$c=liteConfig($s);editorialCapability('lite',$c['version'],'inspect');
     return liteNative($c,function($repo)use($db,$site,$u,$p,$c){return $repo->exclusive(function($repo)use($db,$site,$u,$p,$c){[$state,$hash]=liteReadNative($repo,$c);$catalog=liteCatalog($state);$raw=json_encode($catalog,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
         return atomic($db,function()use($db,$site,$u,$p,$c,$hash,$catalog,$raw){$u=orgOwner($db,$u);$s=liteSite($db,$u,$p,$site);if(liteConfig($s)['hash']!==$c['hash']||liteBusy($db,$site))throw new Problem('Сайт занят или изменён.',409);query($db,'UPDATE lite_sites SET site_hash=?,catalog=?,inspected_at=? WHERE id=?',[$hash,$raw,time(),$site]);auditEvent($db,$u,$p,'lite.inspect',$site,$hash);return ['site'=>$site,'sha256'=>$hash,'pages'=>count($catalog)];});});});
 }
@@ -75,7 +75,7 @@ function liteBackupHash(string $root,BackupService $backup,string $name): string
 function litePublish(PDO $db,int $id,?callable $fault=null): array {
     [$j,$s,$c]=liteWorkerJob($db,$id);
     return liteNative($c,function($repo,$root)use($db,$id,$c,$fault){
-        [$j,$s]=atomic($db,function()use($db,$id,$c){[$j,$s,$fresh]=liteWorkerJob($db,$id);if($fresh['hash']!==$c['hash']||$j['state']!=='queued')throw new Problem('Пакет не ожидает публикации.',409);liteJobActor($db,$j,$s);query($db,"UPDATE lite_jobs SET state='running',updated_at=? WHERE id=?",[time(),$id]);$j['state']='running';return [$j,$s];});
+        [$j,$s,$refusal]=atomic($db,function()use($db,$id,$c){[$j,$s,$fresh]=liteWorkerJob($db,$id);if($fresh['hash']!==$c['hash']||$j['state']!=='queued')throw new Problem('Пакет не ожидает публикации.',409);try{liteJobActor($db,$j,$s);}catch(Problem){return [$j,$s,liteFinish($db,$j,$s,'aborted','authorization or review revoked before native write')];}query($db,"UPDATE lite_jobs SET state='running',updated_at=? WHERE id=?",[time(),$id]);$j['state']='running';return [$j,$s,null];});if($refusal!==null)return $refusal;
         try{return $repo->exclusive(function($repo)use($db,$id,$c,$root,$j,$s,$fault){[$state,$hash]=liteReadNative($repo,$c);
             if(!hash_equals($j['expected_hash'],$hash))return atomic($db,fn()=>liteFinish($db,$j,$s,'conflict','site changed since inspection'));
             // Compute expected result and validate using native schema before backup or commit.
@@ -92,7 +92,7 @@ function litePublish(PDO $db,int $id,?callable $fault=null): array {
 /** Restores entire native site JSON only. Operator MUST stop all CMS writers and keep them stopped. */
 function liteRestore(PDO $db,int $id,bool $offline): array {
     if(!$offline)throw new Problem('Остановите все writers Lite и передайте --offline.',409);
-    [$j,$s,$c]=liteWorkerJob($db,$id);
+    [$j,$s,$c]=liteWorkerJob($db,$id);editorialCapability('lite',$c['version'],'restore_offline');
     return liteNative($c,function($repo,$root)use($db,$id,$c){
         [$j,$s]=atomic($db,function()use($db,$id,$c){[$j,$s,$fresh]=liteWorkerJob($db,$id);if($fresh['hash']!==$c['hash']||$j['state']!=='restore_queued')throw new Problem('Восстановление не подтверждено владельцем.',409);liteJobActor($db,$j,$s,true);allowedProject($db,liteJobActor($db,$j,$s,true),(int)$s['project_id']);query($db,"UPDATE lite_jobs SET state='restoring',updated_at=? WHERE id=?",[time(),$id]);$j['state']='restoring';return [$j,$s];});
         $attempted=false;
@@ -106,11 +106,12 @@ function liteRestore(PDO $db,int $id,bool $offline): array {
     });
 }
 function liteReconcile(PDO $db,int $id,bool $offline=false): array {
-    [$j,$s,$c]=liteWorkerJob($db,$id);
+    [$j,$s,$c]=liteWorkerJob($db,$id);editorialCapability('lite',$c['version'],'reconcile');
     return liteNative($c,function($repo,$root)use($db,$id,$c,$offline){return $repo->exclusive(function($repo)use($db,$id,$c,$offline,$root){[$state,$hash]=liteReadNative($repo,$c);return atomic($db,function()use($db,$id,$c,$state,$hash,$offline,$root){[$j,$s,$fresh]=liteWorkerJob($db,$id);if($fresh['hash']!==$c['hash'])throw new Problem('Конфигурация изменилась.',409);
         if(in_array($j['state'],['running','uncertain'],true)){
-            if(!$j['backup_name']||hash_equals($j['expected_hash'],$hash))return liteFinish($db,$j,$s,'aborted','no commit observed; new inspection required');
-            if(hash_equals($j['after_hash'],$hash))return liteFinish($db,$j,$s,'published','expected commit observed after interruption');
+            $result=editorialLiteRecovery($j,$hash);
+            if($result==='aborted')return liteFinish($db,$j,$s,'aborted','original bytes observed; new inspection required');
+            if($result==='published'){try{$backup=new BackupService(new SiteRepository($root));if(!hash_equals($j['backup_hash'],liteBackupHash($root,$backup,$j['backup_name'])))throw new Problem('Backup digest mismatch.',409);}catch(\Throwable){return liteFinish($db,$j,$s,'uncertain','expected bytes observed but backup verification failed');}return liteFinish($db,$j,$s,'published','expected commit and backup verified after interruption');}
             return liteFinish($db,$j,$s,'uncertain','site diverged; manual investigation required');
         }
         if(in_array($j['state'],['restoring','restore_uncertain'],true)){

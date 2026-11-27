@@ -256,9 +256,9 @@ function handlePost(PDO $db, ?array $user): never {
             $pid=$projectId();$form=$_POST;$parts=explode(':',word($_POST['page_choice']??'',1200,'Страница'),2);if(count($parts)!==2)throw new Problem('Выберите страницу.');$form['edition_id']=$parts[0];$form['page_key']=$parts[1];
             if(($_POST['cms']??'')==='lite'){$parts=explode(':',word($_POST['lite_target']??'',100,'Цель'),2);if(count($parts)!==2)throw new Problem('Выберите сайт Lite.');$form['lite_site_id']=$parts[0];$form['lite_hash']=$parts[1];}
             $id=editorialCreate($db,$user,$pid,$key,$form);go('editorial',['project'=>$pid,'id'=>$id]);
-        case 'editorial.cms': case 'editorial.forum': case 'editorial.retry': case 'editorial.abandon':
+        case 'editorial.cms': case 'editorial.forum': case 'editorial.retry': case 'editorial.abandon': case 'editorial.recover':
             $pid=$projectId();$id=numberId($_POST['id']??0);if(($_POST['confirm']??'')!=='yes')throw new Problem('Подтвердите действие.');
-            if($act==='editorial.cms')editorialCms($db,$user,$pid,$id);elseif($act==='editorial.abandon')editorialAbandon($db,$user,$pid,$id);else editorialForum($db,$user,$pid,$id,$act==='editorial.retry'?'retry':'advance',word($_POST['attempt_key']??'',32,'Ключ попытки'));go('editorial',['project'=>$pid,'id'=>$id]);
+            if($act==='editorial.cms')editorialCms($db,$user,$pid,$id);elseif($act==='editorial.abandon')editorialAbandon($db,$user,$pid,$id);elseif($act==='editorial.recover')editorialRecoverForum($db,$user,$pid,$id,word($_POST['attempt_key']??'',32,'Ключ попытки'),forumId($_POST['thread_id']??null));else editorialForum($db,$user,$pid,$id,$act==='editorial.retry'?'retry':'advance',word($_POST['attempt_key']??'',32,'Ключ попытки'));go('editorial',['project'=>$pid,'id'=>$id]);
         case 'lite.bind':
             $pid=$projectId();$sid=liteBind($db,$user,$pid,word($_POST['target']??'',48,'Цель Lite'),word($_POST['name']??'',120,'Сайт'));go('lite',['project'=>$pid,'site'=>$sid]);
         case 'lite.toggle':

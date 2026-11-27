@@ -39,14 +39,14 @@ function editorialCreate(PDO $db,array $u,int $project,string $request,array $f)
     $plan=hash('sha256',bookJson([$release,$edition,$key,$forum,$kind,$ep,$field,$ls,$path,$hash,$origin]));
     $prior=function()use($db,$u,$project,$request,$plan):?int{$old=query($db,'SELECT * FROM editorial_releases WHERE project_id=? AND request_key=?',[$project,$request])->fetch();if(!$old)return null;if((int)$old['actor_id']!==(int)$u['id']||!hash_equals($old['plan_hash'],$plan))throw new Problem('Ключ уже использован.',409);return (int)$old['id'];};
     if(($id=$prior())!==null)return $id;
-    $page=editorialPageSnapshot($db,$u,$project,$edition,$key);$source=forumSource($db,$u,$project,$forum);if(!(int)$source['active'])throw new Problem('Forum отключён.',409);
+    $page=editorialPageSnapshot($db,$u,$project,$edition,$key);$source=forumSource($db,$u,$project,$forum);editorialForumLocal($db,$u,$source);
     if(forumFindTarget($db,$source,'release',$release))throw new Problem('Обсуждение этого выпуска уже зарегистрировано в разделе.',409);
     if($ep!==null){$p=enginePublication($db,$u,$project,$ep);engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));if($p['state']!=='ready')throw new Problem('Выберите подготовленную публикацию Engine.',409);editorialEngineMatch($p,$page,$field);}
     else{$s=liteSite($db,$u,$project,$ls);liteConfig($s);liteBook($db,$u,$project,$edition,$key);if($s['site_hash']!==$hash||time()-(int)$s['inspected_at']>3600||isset(json_decode($s['catalog'],true,64,JSON_THROW_ON_ERROR)[$path]))throw new Problem('Обновите снимок Lite и выберите свободный адрес.',409);}
     return atomic($db,function()use($db,$u,$project,$request,$release,$edition,$key,$forum,$ep,$field,$ls,$path,$hash,$plan,$page,$prior,$origin){
         $u=editorialActor($db,$u,$project);if(($id=$prior())!==null)return $id;
         $fresh=editorialPageSnapshot($db,$u,$project,$edition,$key);if($fresh!==$page)throw new Problem('Снимок изменился.',409);
-        $s=forumSource($db,$u,$project,$forum);if(!(int)$s['active']||forumFindTarget($db,$s,'release',$release)||query($db,'SELECT 1 FROM editorial_releases WHERE release_id=? AND forum_source_id=? AND abandoned_at IS NULL',[$release,$forum])->fetchColumn())throw new Problem('Уже существует маршрут или обсуждение.',409);
+        $s=forumSource($db,$u,$project,$forum);editorialForumLocal($db,$u,$s);if(!(int)$s['active']||forumFindTarget($db,$s,'release',$release)||query($db,'SELECT 1 FROM editorial_releases WHERE release_id=? AND forum_source_id=? AND abandoned_at IS NULL',[$release,$forum])->fetchColumn())throw new Problem('Уже существует маршрут или обсуждение.',409);
         if($ep!==null){$p=enginePublication($db,$u,$project,$ep);if($p['state']!=='ready'||query($db,'SELECT 1 FROM editorial_releases WHERE engine_publication_id=?',[$ep])->fetchColumn())throw new Problem('Публикация уже используется.',409);editorialEngineMatch($p,$page,$field);}
         else{$s=liteSite($db,$u,$project,$ls);liteConfig($s);if($s['site_hash']!==$hash||time()-(int)$s['inspected_at']>3600||isset(json_decode($s['catalog'],true,64,JSON_THROW_ON_ERROR)[$path]))throw new Problem('Снимок Lite изменился.',409);}
         $rel=releaseRow($db,$project,$release);releaseRepo($db,$rel);$link=bookLinkReleaseLocked($db,$u,$project,$edition,$release,$page['edition_hash']);
@@ -56,7 +56,7 @@ function editorialCreate(PDO $db,array $u,int $project,string $request,array $f)
 }
 function editorialCheck(PDO $db,array $u,array $r): array {
     $project=(int)$r['project_id'];$u=editorialActor($db,$u,$project);if($r['abandoned_at']!==null)throw new Problem('Маршрут закрыт.',409);if((int)$r['actor_id']!==(int)$u['id'])throw new Problem('Действия выполняет создатель маршрута с личным токеном Forum.',403);
-    $page=editorialPageSnapshot($db,$u,$project,(int)$r['edition_id'],$r['page_key']);$rel=releaseRow($db,$project,(int)$r['release_id']);
+    editorialReadAccess($db,$u,$r);$page=editorialPageSnapshot($db,$u,$project,(int)$r['edition_id'],$r['page_key']);$rel=releaseRow($db,$project,(int)$r['release_id']);
     $link=entity($db,'SELECT * FROM book_release_links WHERE project_id=? AND id=?',[$project,$r['book_link_id']]);
     if($page['edition_hash']!==$r['snapshot_hash']||$page['page_hash']!==$r['page_hash']||(int)$link['edition_id']!==(int)$r['edition_id']||(int)$link['release_id']!==(int)$r['release_id']||$link['snapshot_hash']!==$r['snapshot_hash']||$rel['state']!=='confirmed'||!is_string($rel['evidence'])||hash('sha256',$rel['evidence'])!==$link['release_hash']||$rel['evidence_hash']!==$link['release_hash']||$rel['tag']!==$link['tag']||$rel['commit_sha']!==$link['commit_sha'])throw new Problem('Нарушена привязка документации к выпуску.',409);
     releaseRepo($db,$rel);return $page;
@@ -81,11 +81,11 @@ function editorialForumState(PDO $db,array $r): array {
     return ['state'=>$t['state'],'topic'=>$t,'operation'=>$op];
 }
 function editorialObserveCms(PDO $db,array $u,array $r): array {
-    return atomic($db,function()use($db,$u,$r){$r=editorialRow($db,$u,(int)$r['project_id'],(int)$r['id']);$c=editorialCmsState($db,$u,$r);if($c['url']!==null&&$r['cms_url']===null){query($db,'UPDATE editorial_releases SET cms_url=?,cms_confirmed_at=? WHERE id=?',[$c['url'],time(),$r['id']]);}
+    return atomic($db,function()use($db,$u,$r){$r=editorialRow($db,$u,(int)$r['project_id'],(int)$r['id']);editorialCheck($db,$u,$r);$c=editorialCmsState($db,$u,$r);if($c['url']!==null&&$r['cms_url']===null){query($db,'UPDATE editorial_releases SET cms_url=?,cms_confirmed_at=? WHERE id=?',[$c['url'],time(),$r['id']]);}
         editorialEvent($db,$u,$r,'cms',$c['state'],$c['url']??'');return $c;});
 }
 function editorialCms(PDO $db,array $u,int $project,int $id,?callable $transport=null): array {
-    $r=editorialRow($db,$u,$project,$id);$page=editorialCheck($db,$u,$r);$c=editorialCmsState($db,$u,$r);
+    $r=editorialRow($db,$u,$project,$id);try{$page=editorialCheck($db,$u,$r);}catch(Problem $e){if((int)$u['id']===(int)$r['actor_id'])atomic($db,fn()=>editorialEvent($db,$u,$r,'cms','blocked','HTTP '.$e->status));throw $e;}$c=editorialCmsState($db,$u,$r);
     atomic($db,fn()=>editorialEvent($db,$u,$r,'cms','requested',$c['state']));
     try{if($r['engine_publication_id']!==null){$p=enginePublication($db,$u,$project,$c['id']);editorialEngineMatch($p,$page,$r['engine_field']);if($c['state']==='ready')engineConfirm($db,$u,$project,$c['id'],$p['snapshot_hash'],$transport);elseif(in_array($c['state'],['sending','uncertain','published','observed'],true))engineReconcile($db,$u,$project,$c['id'],$transport);}
     elseif($c['id']===null)liteQueue($db,$u,$project,(int)$r['lite_site_id'],editorialKey($r,'lite'),['kind'=>'book','path'=>$r['lite_path'],'site_hash'=>$r['lite_hash'],'edition_id'=>$r['edition_id'],'page_key'=>$r['page_key']]);
@@ -109,18 +109,19 @@ function editorialAbandon(PDO $db,array $u,int $project,int $id): void {
         if($r['cms_url']!==null||$f['topic']!==null||(!in_array($c['state'],['conflict','cancelled','aborted'],true)&&!($r['lite_site_id']!==null&&$c['id']===null)))throw new Problem('Закрыть можно только маршрут без публикации и неопределённых операций.',409);
         query($db,'UPDATE editorial_releases SET abandoned_at=? WHERE id=?',[time(),$id]);editorialEvent($db,$u,$r,'cms','abandoned',$c['state']);});
 }
-function editorialForum(PDO $db,array $u,int $project,int $id,string $action,string $attemptKey,?callable $transport=null): string {
-    $r=editorialRow($db,$u,$project,$id);editorialCheck($db,$u,$r);$cms=editorialObserveCms($db,$u,$r);$r=editorialRow($db,$u,$project,$id);
+function editorialForum(PDO $db,array $u,int $project,int $id,string $action,string $attemptKey,?callable $transport=null,?callable $engineTransport=null): string {
+    $r=editorialRow($db,$u,$project,$id);try{editorialCheck($db,$u,$r);}catch(Problem $e){if((int)$u['id']===(int)$r['actor_id'])atomic($db,fn()=>editorialEvent($db,$u,$r,'forum','blocked','HTTP '.$e->status));throw $e;}$cms=editorialObserveCms($db,$u,$r);$r=editorialRow($db,$u,$project,$id);
     if($cms['url']===null||$cms['url']!==$r['cms_url'])throw new Problem('Требуется подтверждённая публикация и неизменившийся публичный маршрут.',409);
     if($r['engine_publication_id']!==null){$p=enginePublication($db,$u,$project,(int)$r['engine_publication_id']);engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));}else liteConfig(liteSite($db,$u,$project,(int)$r['lite_site_id']));
-    $source=forumSource($db,$u,$project,(int)$r['forum_source_id']);$f=editorialForumState($db,$r);$rel=releaseRow($db,$project,(int)$r['release_id']);[$title,$body]=editorialForumPayload($r,$rel);
+    $source=forumSource($db,$u,$project,(int)$r['forum_source_id']);$f=editorialForumState($db,$r);try{$session=forumSourceSession($db,$u,$source,$transport);forumBoard($session,$source['board_id'],1,$transport);forumSourceCurrent($db,$u,$source,$session);}catch(Problem $e){atomic($db,fn()=>editorialEvent($db,$u,$r,'forum','blocked','HTTP '.$e->status));throw $e;}$rel=releaseRow($db,$project,(int)$r['release_id']);[$title,$body]=editorialForumPayload($r,$rel);
+    if($action==='retry'&&$f['state']==='rejected')editorialCmsFresh($db,$u,$r,$engineTransport);
     if($action==='retry'){
         $r=atomic($db,function()use($db,$u,$r,$attemptKey){$fresh=editorialRow($db,$u,(int)$r['project_id'],(int)$r['id']);if($fresh['forum_key']!==$attemptKey)throw new Problem('Обновите карточку маршрута.',409);$f=editorialForumState($db,$fresh);if($f['state']!=='rejected')throw new Problem('Повтор разрешён только после однозначного отказа Forum.',409);editorialEvent($db,$u,$fresh,'forum','rejected','Попытка '.$fresh['forum_attempt']);query($db,'UPDATE editorial_releases SET forum_key=?,forum_attempt=forum_attempt+1 WHERE id=?',[bin2hex(random_bytes(16)),$fresh['id']]);return editorialRow($db,$u,(int)$fresh['project_id'],(int)$fresh['id']);});
         $f=editorialForumState($db,$r);
     }elseif($action!=='advance')throw new Problem('Неизвестное действие.');elseif($attemptKey!==$r['forum_key'])throw new Problem('Обновите карточку маршрута.',409);
     atomic($db,fn()=>editorialEvent($db,$u,$r,'forum','requested','Попытка '.$r['forum_attempt'].' · '.$f['state']));
     try{
-        if($f['state']==='ready')forumCreate($db,$u,$project,(int)$source['id'],'release',(int)$r['release_id'],$r['forum_key'],$title,$body,$transport,(int)$r['forum_attempt']>1);
+        if($f['state']==='ready')forumCreate($db,$u,$project,(int)$source['id'],'release',(int)$r['release_id'],$r['forum_key'],$title,$body,$transport,(int)$r['forum_attempt']>1,$engineTransport);
         elseif(in_array($f['state'],['pending','sending'],true))forumReconcile($db,$u,$project,(int)$source['id'],(int)$f['topic']['id'],$transport);
         // Uncertain sends are recovered only by the native Forum attachment workflow.
         $f=editorialForumState($db,$r);
@@ -128,16 +129,122 @@ function editorialForum(PDO $db,array $u,int $project,int $id,string $action,str
         if($f['state']==='linked'){
             $c=forumSourceSession($db,$u,$source,$transport);if($c['forum_actor']!==$f['operation']['forum_actor'])throw new Problem('Учётная запись Forum изменилась.',403);$thread=forumThread($c,$source['board_id'],$f['topic']['thread_id'],1,$transport);
             // Verify the actual first post before treating a manually recovered topic as our publication.
-            if(($thread['thread']['title']??null)!==$title||!is_string($thread['first_post_id']??null)||($thread['posts'][0]['id']??null)!==$thread['first_post_id']||($thread['posts'][0]['body']??null)!==$body||($thread['posts'][0]['author_id']??null)!==$f['operation']['forum_actor'])throw new Problem('Тема не соответствует тексту или автору редакторского выпуска.',409);
+            forumSourceCurrent($db,$u,$source,$c);if(!editorialThreadMatches($thread,$title,$body,$f['operation']['forum_actor']))throw new Problem('Тема не соответствует тексту или автору редакторского выпуска.',409);
         }
-        $state=$f['state'];
+        forumSourceCurrent($db,$u,$source,$session);editorialCheck($db,$u,$r);$state=$f['state'];
     }catch(Problem $e){$state='blocked';atomic($db,function()use($db,$u,$r,$e){editorialEvent($db,$u,$r,'forum','blocked','Попытка '.$r['forum_attempt'].' · HTTP '.$e->status);});throw $e;}
     atomic($db,function()use($db,$u,$r,$state){editorialEvent($db,$u,$r,'forum',$state,'Попытка '.$r['forum_attempt']);});return $state;
 }
-function editorialPage(PDO $db,array $u,?int $project,array $args): array {
-    $u=organizationUser($db,$u);$projects=rightProjects($db,$u,'manage');$runs=$editions=$releases=$engine=$lite=$forum=$events=[];$run=$cms=$discussion=null;$verified=false;
+function editorialForumLocal(PDO $db,array $u,array $s): array {
+    if(!(int)$s['active'])throw new Problem('Forum отключён.',409);$c=forumConfig($db,$u,$s['connection_key']);if(!hash_equals($s['config_hash'],$c['hash']))throw new Problem('Конфигурация Forum изменилась.',409);return forumIdentity($c,$u);
+}
+/** Bindings are checked on every read, including historical routes. */
+function editorialReadAccess(PDO $db,array $u,array $r): array {
+    $project=(int)$r['project_id'];$u=editorialActor($db,$u,$project);
+    $edition=bookEdition($db,$u,$project,(int)$r['edition_id']);
+    $bc=bookSourceConfig($db,$u,bookSource($db,$u,$project,(int)$edition['source_id']));
+    $profiles=['book'=>editorialCapability('book',$bc['installed_version'],'snapshot')];
+    if($r['engine_publication_id']!==null){$p=enginePublication($db,$u,$project,(int)$r['engine_publication_id']);$c=engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));$profiles['engine']=editorialCapability('engine',$c['installed_version'],'publish_cas');}
+    else{$c=liteConfig(liteSite($db,$u,$project,(int)$r['lite_site_id']));$profiles['lite']=editorialCapability('lite',$c['version'],'publish_locked');}
+    return $profiles;
+}
+function editorialPinnedPage(array $edition,string $key): array {
+    foreach(json_decode($edition['snapshot'],true,64,JSON_THROW_ON_ERROR)['pages'] as $p)if($p['key']===bookKey($key)){
+        if(!hash_equals($p['sha256'],hash('sha256',bookJson($p['page']))))throw new Problem('Нарушена целостность страницы.',409);
+        return $p['page'];
+    }throw new Problem('Страница отсутствует в редакции.',404);
+}
+/** An historical receipt does not authorize a new announcement of changed content. */
+function editorialCmsFresh(PDO $db,array $u,array $r,?callable $transport=null): void {
+    $project=(int)$r['project_id'];$page=editorialCheck($db,$u,$r);$cms=editorialCmsState($db,$u,$r);
+    if($cms['url']===null||$cms['url']!==$r['cms_url'])throw new Problem('Сначала подтвердите публикацию CMS.',409);
+    if($r['engine_publication_id']!==null){
+        $p=enginePublication($db,$u,$project,$cms['id']);$c=engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));$expected=engineExpected($p);
+        $current=engineEntry($c,$p['content_type'],$p['entry_id'],$transport);
+        if(engineHash($current)!==engineHash($expected)||engineFindUrl($c,$p['content_type'],$p['entry_id'],$expected,$transport)!==$r['cms_url'])throw new Problem('Редакция или маршрут Engine изменились; объявление заблокировано.',409);
+        if(engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']))['hash']!==$c['hash'])throw new Problem('Доступ Engine изменился.',409);
+    }else{
+        $s=liteSite($db,$u,$project,(int)$r['lite_site_id']);liteConfig($s);$j=liteJob($db,$u,$project,(int)$s['id'],$cms['id']);
+        if(!editorialLiteObservation($j,$s,$page,time()))throw new Problem('Требуется свежий нативный lite:inspect с исходным опубликованным SHA и страницей.',409);
+    }
+    editorialCheck($db,$u,editorialRow($db,$u,$project,(int)$r['id']));
+}
+/** Read-only comparison. Never refresh by publishing or change the pinned snapshot. */
+function editorialCompareRoute(PDO $db,array $u,array $r,string $kind,?int $previous=null,?callable $bookTransport=null,?callable $engineTransport=null,?callable $forumTransport=null): array {
+    $project=(int)$r['project_id'];editorialReadAccess($db,$u,$r);$edition=bookEdition($db,$u,$project,(int)$r['edition_id']);$page=editorialPinnedPage($edition,$r['page_key']);
+    $before=$page;$after=null;$label='';
+    if($kind==='book'){
+        $source=bookSource($db,$u,$project,(int)$edition['source_id']);$c=bookSourceConfig($db,$u,$source);
+        if($previous!==null){$other=bookEdition($db,$u,$project,$previous);if((int)$other['source_id']!==(int)$source['id'])throw new Problem('Выберите редакцию этой же книги.',409);$after=editorialPinnedPage($other,$r['page_key']);$label='Book #'.$edition['id'].' → #'.$other['id'];}
+        else{$after=bookRead($c,$r['page_key'],$bookTransport);$label='Закреплённая редакция → текущий Reader Book';}
+        if(bookSourceConfig($db,$u,bookSource($db,$u,$project,(int)$source['id']))['hash']!==$c['hash'])throw new Problem('Доступ Book изменился.',409);
+        $before=bookJson($before);$after=bookJson($after); // canonical evidence including metadata
+        // Show readable body and metadata on separate lines; hashes refer to exact canonical values.
+        $beforePage=$page;$afterPage=json_decode($after,true,64,JSON_THROW_ON_ERROR);
+        $fields=['Заголовок'=>editorialTextDiff($beforePage['title'],$afterPage['title']),'Текст'=>editorialTextDiff($beforePage['body'],$afterPage['body']),'Метаданные'=>editorialTextDiff(bookJson(array_diff_key($beforePage,['title'=>true,'body'=>true])),bookJson(array_diff_key($afterPage,['title'=>true,'body'=>true])))];
+    }elseif($kind==='cms'&&$r['engine_publication_id']!==null){
+        $p=enginePublication($db,$u,$project,(int)$r['engine_publication_id']);$c=engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));
+        $old=in_array($p['state'],['published','observed'],true)?engineExpected($p):engineSnapshot(json_decode($p['snapshot'],true,64,JSON_THROW_ON_ERROR));
+        if(!in_array($p['state'],['published','observed'],true)&&engineHash($old)!==$p['snapshot_hash'])throw new Problem('Нарушена целостность снимка.',409);
+        $new=engineEntry($c,$p['content_type'],$p['entry_id'],$engineTransport);$field=$r['engine_field'];$before=engineJson($old);$after=engineJson($new);$label='Engine v'.$old['revision'].' → v'.$new['revision'];
+        $fields=['Заголовок'=>editorialTextDiff($old['title'],$new['title']),'Текст'=>editorialTextDiff(engineJson([$old['data'][$field]??null]),engineJson([$new['data'][$field]??null])),'Прочие поля и редакция'=>editorialTextDiff(engineJson(array_diff_key($old,['title'=>true])),engineJson(array_diff_key($new,['title'=>true])))];
+        if(is_string($old['data'][$field]??null)&&is_string($new['data'][$field]??null))$fields['Текст']=editorialTextDiff($old['data'][$field],$new['data'][$field]);
+        if(engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']))['hash']!==$c['hash'])throw new Problem('Доступ Engine изменился.',409);
+    }elseif($kind==='cms'){
+        $s=liteSite($db,$u,$project,(int)$r['lite_site_id']);liteConfig($s);
+        if(!is_string($s['catalog'])||time()-(int)$s['inspected_at']>900||(int)$s['inspected_at']>time())throw new Problem('Обновите каталог командой lite:inspect.',409);
+        $current=json_decode($s['catalog'],true,64,JSON_THROW_ON_ERROR)[$r['lite_path']]??null;
+        $label='Book → наблюдение Lite ('.gmdate('Y-m-d H:i:s',(int)$s['inspected_at']).' UTC)';
+        $old=['title'=>$page['title'],'body'=>$page['body'],'published'=>true];$new=$current===null?[]:['title'=>$current['title'],'body'=>$current['body'],'published'=>$current['published']];$before=bookJson($old);$after=bookJson($new);
+        $fields=['Заголовок'=>editorialTextDiff($old['title'],$new['title']??''),'Текст'=>editorialTextDiff($old['body'],$new['body']??''),'Состояние'=>editorialTextDiff('published',$current===null?'absent':($current['published']?'published':'draft'))];
+    }elseif($kind==='forum'){
+        if((int)$u['id']!==(int)$r['actor_id'])throw new Problem('Требуется автор маршрута.',403);
+        $f=editorialForumState($db,$r);if($f['state']!=='linked'||!isset($f['operation']))throw new Problem('Тема не подтверждена.',409);
+        $s=forumSource($db,$u,$project,(int)$r['forum_source_id']);$c=forumSourceSession($db,$u,$s,$forumTransport);$thread=forumThread($c,$s['board_id'],$f['topic']['thread_id'],1,$forumTransport);
+        if($c['forum_actor']!==$f['operation']['forum_actor']||($thread['posts'][0]['id']??null)!==($thread['first_post_id']??null)||!is_string($thread['first_post_id']??null)||!empty($thread['posts'][0]['ignored_author'])||($thread['posts'][0]['author_id']??null)!==$c['forum_actor']||!is_string($thread['posts'][0]['body']??null)||!is_string($thread['thread']['title']??null))throw new Problem('Первое сообщение недоступно или автор не совпадает.',404);
+        [$title,$body]=editorialForumPayload($r,releaseRow($db,$project,(int)$r['release_id']));$before=bookJson([$title,$body]);$after=bookJson([$thread['thread']['title'],$thread['posts'][0]['body']]);$label='Ожидаемая тема → текущий первый пост';
+        $fields=['Заголовок'=>editorialTextDiff($title,$thread['thread']['title']),'Текст'=>editorialTextDiff($body,$thread['posts'][0]['body'])];forumSourceCurrent($db,$u,$s,$c);
+    }else throw new Problem('Неизвестный тип сравнения.',422);
+    editorialReadAccess($db,$u,editorialRow($db,$u,$project,(int)$r['id']));
+    return ['label'=>$label,'equal'=>$before===$after,'before_hash'=>hash('sha256',$before),'after_hash'=>hash('sha256',$after),'fields'=>$fields];
+}
+/** Recovery of Forum is a read/attach, not another external create. */
+function editorialValidateAttachment(PDO $db,array $u,array $source,string $kind,int $target,array $c,array $thread): void {
+    if($kind!=='release')return;
+    $r=query($db,'SELECT * FROM editorial_releases WHERE project_id=? AND release_id=? AND forum_source_id=? AND abandoned_at IS NULL',[$source['project_id'],$target,$source['id']])->fetch();if(!$r)return;
+    editorialCheck($db,$u,$r);$f=editorialForumState($db,$r);
+    if(!in_array($f['state'],['uncertain','rejected','linked'],true)||!isset($f['operation'])||$r['cms_url']===null||$f['operation']['forum_actor']!==$c['forum_actor'])throw new Problem('Нет прерванной отправки редакторского маршрута.',409);
+    [$title,$body]=editorialForumPayload($r,releaseRow($db,(int)$r['project_id'],$target));
+    if(!hash_equals($f['operation']['payload_hash'],forumRequestHash('create',['release',$target,['title'=>$title,'body'=>$body,'body_format'=>'plain','kind'=>'discussion']]))||!editorialThreadMatches($thread,$title,$body,$c['forum_actor']))throw new Problem('Найденная тема не соответствует отправленной редакции.',409);
+}
+function editorialRecoverForum(PDO $db,array $u,int $project,int $id,string $key,string $thread,?callable $transport=null): void {
+    $r=editorialRow($db,$u,$project,$id);editorialCheck($db,$u,$r);$f=editorialForumState($db,$r);
+    if($key!==$r['forum_key']||$f['state']!=='uncertain')throw new Problem('Обновите маршрут; восстановление возможно только для неопределённой отправки.',409);
+    forumAttach($db,$u,$project,(int)$r['forum_source_id'],'release',(int)$r['release_id'],forumId($thread),$transport);
+    atomic($db,function()use($db,$u,$project,$id,$key){$fresh=editorialRow($db,$u,$project,$id);editorialCheck($db,$u,$fresh);if($fresh['forum_key']!==$key||editorialForumState($db,$fresh)['state']!=='linked')throw new Problem('Маршрут изменился.',409);editorialEvent($db,$u,$fresh,'forum','linked','Проверенное восстановление · попытка '.$fresh['forum_attempt']);});
+}
+
+function editorialPage(PDO $db,array $u,?int $project,array $args,?callable $forumTransport=null,?callable $bookTransport=null,?callable $engineTransport=null): array {
+    $u=organizationUser($db,$u);$projects=rightProjects($db,$u,'manage');$runs=$editions=$releases=$engine=$lite=$forum=$events=[];$run=$cms=$discussion=$comparison=$comparisonError=null;$profiles=[];$verified=false;$forumAllowed=false;
     if($project!==null){$u=editorialActor($db,$u,$project);$filter='';$params=[$project];foreach(['release'=>'release_id','edition'=>'edition_id','publication'=>'engine_publication_id','lite_site'=>'lite_site_id','forum_source'=>'forum_source_id'] as $arg=>$col)if(($args[$arg]??'')!==''){$filter.=' AND e.'.$col.'=?';$params[]=numberId($args[$arg]);}$runs=query($db,'SELECT e.*,r.tag FROM editorial_releases e JOIN project_releases r ON r.id=e.release_id WHERE e.project_id=?'.$filter.' ORDER BY e.id DESC LIMIT 100',$params)->fetchAll();
-        if(($args['id']??'')!==''){$run=editorialRow($db,$u,$project,numberId($args['id']));$cms=editorialCmsState($db,$u,$run);$f=editorialForumState($db,$run);$discussion=(int)$run['actor_id']===(int)$u['id']?$f['state']:null;$events=query($db,'SELECT * FROM editorial_events WHERE editorial_id=? ORDER BY id DESC LIMIT 100',[$run['id']])->fetchAll();if($discussion===null)$events=array_values(array_filter($events,fn($e)=>$e['step']!=='forum'));foreach($events as $e)if($e['step']==='forum'){$verified=$e['state']==='linked'&&$discussion==='linked';break;}}
-        else{foreach(query($db,'SELECT id,title FROM book_editions WHERE project_id=? ORDER BY id DESC LIMIT 50',[$project])->fetchAll() as $e){try{$b=bookEdition($db,$u,$project,(int)$e['id']);if(bookReviewState($b,bookReviews($db,$b))!=='approved')continue;bookReviewer($db,$u,$project,(int)$b['reviewer_a']);bookReviewer($db,$u,$project,(int)$b['reviewer_b']);foreach(json_decode($b['snapshot'],true,64,JSON_THROW_ON_ERROR)['pages'] as $p)if(!$p['page']['media'])$editions[$b['id'].':'.$p['key']]=$e['title'].' #'.$e['id'].' · '.$p['key'];}catch(Problem){}}$releases=query($db,"SELECT id,tag FROM project_releases WHERE project_id=? AND state='confirmed' ORDER BY id DESC LIMIT 100",[$project])->fetchAll();$engine=query($db,"SELECT p.id,p.content_type,p.entry_id,p.revision,s.name FROM engine_publications p JOIN engine_sites s ON s.id=p.site_id WHERE p.project_id=? AND p.state='ready' AND s.active=1 ORDER BY p.id DESC LIMIT 100",[$project])->fetchAll();$lite=query($db,'SELECT id,name,site_hash FROM lite_sites WHERE project_id=? AND active=1 AND site_hash IS NOT NULL ORDER BY id LIMIT 100',[$project])->fetchAll();$forum=query($db,'SELECT id FROM forum_sources WHERE project_id=? AND active=1 ORDER BY id LIMIT 100',[$project])->fetchAll();}
-    }return compact('project','projects','runs','editions','releases','engine','lite','forum','run','cms','discussion','events','verified');
+        $runs=array_values(array_filter($runs,function($r)use($db,$u){try{editorialReadAccess($db,$u,$r);return true;}catch(Problem){return false;}}));
+        if(($args['id']??'')!==''){
+            $run=editorialRow($db,$u,$project,numberId($args['id']));$profiles=editorialReadAccess($db,$u,$run);$cms=editorialCmsState($db,$u,$run);
+            if((int)$run['actor_id']===(int)$u['id'])try{
+                $source=forumSource($db,$u,$project,(int)$run['forum_source_id']);$c=forumSourceSession($db,$u,$source,$forumTransport);forumBoard($c,$source['board_id'],1,$forumTransport);
+                $f=editorialForumState($db,$run);
+                if(isset($f['operation'])&&$f['operation']['forum_actor']!==$c['forum_actor'])throw new Problem('Учётная запись изменена.',403);
+                if($f['state']==='linked'){$thread=forumThread($c,$source['board_id'],$f['topic']['thread_id'],1,$forumTransport);[$title,$body]=editorialForumPayload($run,releaseRow($db,$project,(int)$run['release_id']));$verified=editorialThreadMatches($thread,$title,$body,$c['forum_actor']);}
+                forumSourceCurrent($db,$u,$source,$c);$forumAllowed=true;$discussion=$f['state'];$profiles['forum']=editorialCapability('forum',$c['installed_version'],'personal_acl');
+            }catch(Problem|\JsonException){$verified=false;$discussion=null;$forumAllowed=false;}
+            $events=query($db,'SELECT * FROM editorial_events WHERE editorial_id=? ORDER BY id DESC LIMIT 100',[$run['id']])->fetchAll();if(!$forumAllowed)$events=array_values(array_filter($events,fn($e)=>$e['step']!=='forum'));
+            if(($args['compare']??'')!=='')try{$comparison=editorialCompareRoute($db,$u,$run,choice($args['compare'],['book'=>'book','cms'=>'cms','forum'=>'forum']),optionalId($args['previous']??''),$bookTransport,$engineTransport,$forumTransport);}catch(Problem $e){$comparisonError=$e->getMessage();}
+            editorialReadAccess($db,$u,$run);
+        }
+        else{foreach(query($db,'SELECT id,title FROM book_editions WHERE project_id=? ORDER BY id DESC LIMIT 50',[$project])->fetchAll() as $e){try{$b=bookEdition($db,$u,$project,(int)$e['id']);if(bookReviewState($b,bookReviews($db,$b))!=='approved')continue;bookReviewer($db,$u,$project,(int)$b['reviewer_a']);bookReviewer($db,$u,$project,(int)$b['reviewer_b']);foreach(json_decode($b['snapshot'],true,64,JSON_THROW_ON_ERROR)['pages'] as $p)if(!$p['page']['media'])$editions[$b['id'].':'.$p['key']]=$e['title'].' #'.$e['id'].' · '.$p['key'];}catch(Problem){}}$releases=query($db,"SELECT id,tag FROM project_releases WHERE project_id=? AND state='confirmed' ORDER BY id DESC LIMIT 100",[$project])->fetchAll();$engine=query($db,"SELECT p.id,p.site_id,p.content_type,p.entry_id,p.revision,s.name FROM engine_publications p JOIN engine_sites s ON s.id=p.site_id WHERE p.project_id=? AND p.state='ready' AND s.active=1 ORDER BY p.id DESC LIMIT 100",[$project])->fetchAll();$lite=query($db,'SELECT id,name,site_hash FROM lite_sites WHERE project_id=? AND active=1 AND site_hash IS NOT NULL ORDER BY id LIMIT 100',[$project])->fetchAll();$forum=query($db,'SELECT id FROM forum_sources WHERE project_id=? AND active=1 ORDER BY id LIMIT 100',[$project])->fetchAll();
+            $engine=array_values(array_filter($engine,function($p)use($db,$u,$project){try{engineSiteConfig($db,$u,engineSite($db,$u,$project,(int)$p['site_id']));return true;}catch(Problem){return false;}}));
+            $lite=array_values(array_filter($lite,function($p)use($db,$u,$project){try{liteConfig(liteSite($db,$u,$project,(int)$p['id']));return true;}catch(Problem){return false;}}));
+            $forum=array_values(array_filter($forum,function($p)use($db,$u,$project){try{$s=forumSource($db,$u,$project,(int)$p['id']);$c=forumConfig($db,$u,$s['connection_key']);if($s['config_hash']!==$c['hash'])return false;forumIdentity($c,$u);return true;}catch(Problem){return false;}}));
+        }
+    }return compact('project','projects','runs','editions','releases','engine','lite','forum','run','cms','discussion','events','verified','profiles','forumAllowed','comparison','comparisonError');
 }
