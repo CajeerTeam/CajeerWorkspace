@@ -18,8 +18,8 @@ import release
 ROLES = ('product_owner', 'team_lead', 'accountant', 'lawyer', 'on_call')
 KEYS = (*ROLES, 'release')
 REPORTS = ('topology.json', 'readiness.json', 'load.json', 'restore.json', 'review.json', 'cycle.json')
-VERSION = '1.8.3'
-PREVIOUS = '1.8.2'
+VERSION = '1.8.4'
+PREVIOUS = '1.8.3'
 NAME = f'CajeerWorkspace-{VERSION}.zip'
 SCENARIOS = ('client', 'delivery', 'oss', 'legal_finance')
 CHECKS = ('clean_install', 'upgrade', 'rollback', 'auth_policy', 'identity_sessions', 'realm_acceptance', 'rbac', 'localization', 'worker_loss', 'database_restart', 'offsite_restore', 'key_rotation', 'assistant_readonly', 'assistant_role_policy', 'assistant_confirmed_drafts', 'team_lead_review', 'team_lead_decisions', 'team_lead_dependencies', 'oss_release_lines', 'oss_backport_changelog', 'oss_contributor_notifications', 'service_operations', 'owner_portfolio', 'budget_versions', 'collection_forecast', 'team_capacity', 'capacity_substitution', 'queue_forecast', 'freelance_package', 'freelance_advance_and_recurring', 'freelance_client_acceptance', 'entity_books', 'supplier_accruals', 'supplier_payments_and_refunds', 'bank_format_versions', 'bank_independent_review', 'bank_closing_export', 'contract_signer_authority', 'contract_terms_revision', 'contract_deadline_tasks', 'jurisdiction_rule_versions', 'jurisdiction_exchange_receipts', 'sign_test_live_isolation', 'release_trace_identity', 'release_trace_logs', 'release_trace_incident', 'editorial_versioned_compare', 'editorial_revocation', 'editorial_interrupted_recovery', 'bots_support_feedback', 'bots_manual_reconciliation')

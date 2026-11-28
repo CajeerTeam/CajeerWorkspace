@@ -1,4 +1,4 @@
-import sqlite3, unittest
+import re, sqlite3, unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class CapacitySchema(unittest.TestCase):
@@ -22,6 +22,17 @@ class CapacitySchema(unittest.TestCase):
         self.db.execute('INSERT INTO capacity_weeks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',row)
         for r in [row,(1,1,'2027-01-11',1441,*row[4:]),(1,1,'2027-01-11',-1,*row[4:])]:
             with self.assertRaises(sqlite3.IntegrityError):self.db.execute('INSERT INTO capacity_weeks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',r)
+    def test_calendar_production_upsert(self):
+        source=(ROOT/'app/Capacity.php').read_text()
+        sql=re.search(r"query\(\$db,'(INSERT INTO capacity_weeks[^']+)'",source).group(1)
+        # PDO execute(array) binds strings by default; exercise the same input shape.
+        first=(1,1,'2027-01-04',60,120,180,240,300,360,420,'Initial',1,100)
+        updated=(1,1,'2027-01-04',0,120,180,240,300,360,420,'Leave',1,200)
+        for row in (first,updated,updated):
+            self.db.execute(sql,tuple(map(str,row)))
+            self.assertEqual(self.db.execute('SELECT * FROM capacity_weeks').fetchall(),[row])
+        self.assertEqual(self.before,self.db.execute('SELECT * FROM project_availability').fetchall())
+        self.assertEqual(self.db.execute('PRAGMA foreign_key_check').fetchall(),[])
     def test_attribution(self):
         self.db.execute("INSERT INTO capacity_teams VALUES(1,1,1,'2027-01-04',1)")
         for r in [(2,1,1,'2027-01-04',2),(1,1,1,'2027-01-04',2),(1,1,1,'2027-01-11',1),(1,2,1,'2027-01-04',1)]:

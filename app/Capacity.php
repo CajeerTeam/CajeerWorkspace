@@ -74,7 +74,7 @@ function capacityCommand(PDO $db,array $user,string $key,string $act,array $f): 
             $before=capacityCalendar($db,$org,$uid,$week);
             organizationUser($db,['id'=>$uid],$org);
             if(capacityAllocated($db,$org,$uid,$week)>capacityTotal($payload))throw new Problem('Сначала перераспределите лишнюю ёмкость.',409);
-            query($db,'INSERT INTO capacity_weeks(organization_id,user_id,week_on,mon,tue,wed,thu,fri,sat,sun,reason,actor_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_id,user_id,week_on) DO UPDATE SET mon=excluded.mon,tue=excluded.tue,wed=excluded.wed,thu=excluded.thu,fri=excluded.fri,sat=excluded.sat,sun=excluded.sun,reason=excluded.reason,actor_id=excluded.actor_id,updated_at=excluded.updated_at',[$org,$uid,$week,...array_values($payload),$reason,$actor,time()]);
+            query($db,'INSERT INTO capacity_weeks(organization_id,user_id,week_on,mon,tue,wed,thu,fri,sat,sun,reason,actor_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(organization_id,user_id,week_on) DO UPDATE SET mon=excluded.mon,tue=excluded.tue,wed=excluded.wed,thu=excluded.thu,fri=excluded.fri,sat=excluded.sat,sun=excluded.sun,reason=excluded.reason,actor_id=excluded.actor_id,updated_at=excluded.updated_at',[$org,$uid,$week,...array_values($payload),$reason,$actor,time()]);
             $after=$payload;
         }elseif($act==='capacity.assign'){
             entity($db,'SELECT id FROM projects WHERE organization_id=? AND id=?',[$org,$payload['project']]);
