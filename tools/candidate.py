@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.8.1', '1.8.2'
+OLD, NEW = '1.8.2', '1.8.3'
 OLD_SCHEMA, SCHEMA = 51, 51
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 

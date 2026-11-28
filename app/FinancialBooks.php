@@ -52,7 +52,9 @@ function supplierBeforeApproval(PDO $db,array $request): ?int {
     $entry=entity($db,'SELECT credit_id FROM accounting_entries WHERE id=? AND organization_id=?',[$b['entry_id'],$b['organization_id']]);return (int)$entry['credit_id'];
 }
 function bookTrial(PDO $db,int $org,int $entity,string $start,string $end): array {
-    $rows=query($db,'SELECT e.*,d.code debit_code,c.code credit_code FROM accounting_entries e JOIN accounting_accounts d ON d.id=e.debit_id JOIN accounting_accounts c ON c.id=e.credit_id LEFT JOIN finance_book_projects p ON p.project_id=e.project_id LEFT JOIN finance_book_allocations a ON a.entry_id=e.id WHERE e.organization_id=? AND COALESCE(p.entity_id,a.entity_id,0)=? AND e.booked_on<=? ORDER BY e.id',[$org,$entity,$end]);
+    // PDO execute(array) binds values as strings; COALESCE has no column affinity in SQLite.
+    // Cast the parameter (not the IDs) to preserve integer comparison on both backends.
+    $rows=query($db,'SELECT e.*,d.code debit_code,c.code credit_code FROM accounting_entries e JOIN accounting_accounts d ON d.id=e.debit_id JOIN accounting_accounts c ON c.id=e.credit_id LEFT JOIN finance_book_projects p ON p.project_id=e.project_id LEFT JOIN finance_book_allocations a ON a.entry_id=e.id WHERE e.organization_id=? AND COALESCE(p.entity_id,a.entity_id,0)=CAST(? AS BIGINT) AND e.booked_on<=? ORDER BY e.id',[$org,$entity,$end]);
     $out=[];while($r=$rows->fetch()){
         foreach(['debit'=>1,'credit'=>-1] as $side=>$sign){$k=$r[$side.'_code'];$cur=$r['currency'];$out[$cur][$k]??=['opening'=>0,'debit'=>0,'credit'=>0,'closing'=>0];$v=(int)$r['amount_minor'];$t=&$out[$cur][$k];$field=$r['booked_on']<$start||$r['kind']==='opening'?'opening':$side;$t[$field]=accountingAdd($t[$field],$field==='opening'?$sign*$v:$v);$t['closing']=accountingAdd($t['closing'],$sign*$v);unset($t);}
     }return $out;
@@ -102,8 +104,9 @@ function bookCommand(PDO $db,array $user,string $key,string $act,array $form): i
             $id=numberId($f['id']);$p=entity($db,'SELECT * FROM finance_book_periods WHERE id=? AND entity_id=?',[$id,$e]);
             if($p['closed_at']!==null||$p['ends_on']>=gmdate('Y-m-d')||query($db,'SELECT 1 FROM finance_book_periods WHERE entity_id=? AND starts_on<? AND closed_at IS NULL',[$e,$p['starts_on']])->fetchColumn())throw new Problem('Закройте завершённые периоды по порядку.',409);
             if(query($db,"SELECT 1 FROM payment_requests r JOIN finance_book_projects p ON p.project_id=r.project_id WHERE p.entity_id=? AND r.status='pending' AND r.booked_on<=?",[$e,$p['ends_on']])->fetchColumn())throw new Problem('Есть ожидающие платежи.',409);
-            foreach(bookTrial($db,$org,$e,$p['starts_on'],$p['ends_on']) as $currency=>$rows){$total=['opening'=>0,'debit'=>0,'credit'=>0,'closing'=>0];foreach($rows as $row)foreach($total as $k=>$v)$total[$k]=accountingAdd($v,$row[$k]);if($total['opening']!==0||$total['closing']!==0||$total['debit']!==$total['credit'])throw new Problem('Книга не сбалансирована: '.$currency,409);}
-            foreach(bookPayableControl(bookTrial($db,$org,$e,$p['starts_on'],$p['ends_on']),bookPayableAt($db,$e,$p['ends_on'])) as $c=>$row)if(!$row['ok'])throw new Problem('Задолженность поставщикам не сходится: '.$c,409);
+            $trial=bookTrial($db,$org,$e,$p['starts_on'],$p['ends_on']);
+            foreach($trial as $currency=>$rows){$total=['opening'=>0,'debit'=>0,'credit'=>0,'closing'=>0];foreach($rows as $row)foreach($total as $k=>$v)$total[$k]=accountingAdd($v,$row[$k]);if($total['opening']!==0||$total['closing']!==0||$total['debit']!==$total['credit'])throw new Problem('Книга не сбалансирована: '.$currency,409);}
+            foreach(bookPayableControl($trial,bookPayableAt($db,$e,$p['ends_on'])) as $c=>$row)if(!$row['ok'])throw new Problem('Задолженность поставщикам не сходится: '.$c,409);
             foreach(bookCashControl($db,$org,$p['ends_on']) as $row)if(!$row['ok'])throw new Problem('Распределение кассы не сходится.',409);
             if(!accountingReconcile($db,$org)['ok'])throw new Problem('Общая касса не сверена.',409);
             bankCloseCheck($db,$org,$e,$p['starts_on'],$p['ends_on'],$actor);

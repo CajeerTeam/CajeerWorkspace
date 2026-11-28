@@ -76,7 +76,7 @@ def validate_payload(payload):
     migrations = {name: sha(data) for name, data in payload.items() if name.startswith("database/") and name.endswith(".sql")}
     if freeze != {"schema": n, "migrations": migrations}:
         raise ValueError("Frozen schema mismatch")
-    if sha(payload["config/compatibility.json"]) != "897116b35500f4d4243d6913373d7f6e11aa666ec8a657c0286657e2c03fd044":
+    if sha(payload["config/compatibility.json"]) != "e9ced9c1c2f3bc163eb644464fceafe9fe234b8130ad878501ce1d62308001f2":
         raise ValueError("Release compatibility matrix changed")
     matrix = json.loads(payload["config/compatibility.json"])
     if matrix["version"] != version or matrix["schema"] != n:

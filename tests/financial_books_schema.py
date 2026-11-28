@@ -27,4 +27,37 @@ class BooksSchema(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):self.db.execute("INSERT INTO supplier_payments VALUES(2,1,2,'ref2','payment',NULL)")
         with self.assertRaises(sqlite3.IntegrityError):self.db.execute("INSERT INTO supplier_payments VALUES(2,2,2,'ref2','refund',1)")
         self.assertEqual(self.db.execute('PRAGMA foreign_key_check').fetchall(),[])
+    def test_trial_entity_parameter_affinity(self):
+        # Execute the actual production SELECT with string-bound parameters (PDO execute(array)).
+        source=(ROOT/'app/FinancialBooks.php').read_text()
+        sql=source.split("function bookTrial(",1)[1].split("$rows=query($db,'",1)[1].split("',[$org,$entity,$end]",1)[0]
+        self.migrate()
+        self.db.execute('INSERT INTO finance_book_projects VALUES(1,1,1,1,1)')
+        self.db.execute('INSERT INTO finance_book_projects VALUES(2,1,2,1,1)')
+        self.db.execute("UPDATE accounting_accounts SET code='AP-EXP' WHERE id=1")
+        self.db.execute("UPDATE accounting_accounts SET code='AP-LIAB' WHERE id=2")
+        self.db.execute("INSERT INTO accounting_accounts(id,organization_id,code,name,kind) VALUES(3,1,'1000','Cash','asset'),(4,1,'3000','Capital','equity')")
+        self.db.execute('UPDATE accounting_entries SET amount_minor=8000 WHERE id=1')
+        self.db.execute("UPDATE accounting_entries SET amount_minor=2500,currency='USD' WHERE id=2")
+        self.db.executescript("""INSERT INTO accounting_entries(id,organization_id,period_id,project_id,booked_on,currency,debit_id,credit_id,amount_minor,kind,memo,actor_id,created_at) VALUES
+            (3,1,1,NULL,'2026-01-01','EUR',3,4,10000,'opening','Opening',1,1),
+            (4,1,1,1,'2026-01-02','EUR',2,3,3000,'manual','Payment',1,1),
+            (5,1,1,1,'2026-02-01','EUR',3,2,1000,'manual','Refund',1,1),
+            (6,1,1,NULL,'2026-01-01','GBP',3,4,2000,'opening','Unallocated',1,1);
+            INSERT INTO finance_book_allocations VALUES(3,1,1,1,1);""")
+        def trial(entity,end):
+            return self.db.execute(sql,('1',str(entity),end)).fetchall()
+        # Named columns avoid relying on physical table column offsets.
+        self.db.row_factory=sqlite3.Row
+        def liability(rows):
+            return sum(r['amount_minor']*(int(r['debit_code']=='AP-LIAB')-int(r['credit_code']=='AP-LIAB')) for r in rows)
+        historical=trial(1,'2026-01-31')
+        self.assertEqual([r['id'] for r in historical],[1,3,4])
+        self.assertEqual(liability(historical),-5000)
+        self.assertEqual(liability(trial(1,'2026-02-28')),-6000)
+        self.assertEqual([r['id'] for r in trial(2,'2026-02-28')],[2])
+        self.assertEqual(liability(trial(2,'2026-02-28')),-2500)
+        self.assertEqual([r['id'] for r in trial(0,'2026-02-28')],[6])
+        self.assertEqual(trial(3,'2026-02-28'),[])
+        self.assertEqual(trial(1,'2026-01-31'),historical)
 if __name__=='__main__':unittest.main()
