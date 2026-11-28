@@ -64,11 +64,37 @@ const TRANSFER_TABLES = [
     'contracts'=>'id','contract_revisions'=>'id','contract_attachments'=>'id','contract_obligations'=>'id','contract_authorities'=>'id','contract_activation_evidence'=>'revision_id','contract_controls'=>'task_id',
     'preparation_templates'=>'id','preparations'=>'id','preparation_revisions'=>'id','preparation_events'=>'id','signing_packages'=>'id','signing_archive'=>'package_id','signing_callbacks'=>'id','signing_receipts'=>'id','retention_policies'=>'id','retention_documents'=>'document_id','retention_holds'=>'id','retention_links'=>'id','retention_deliveries'=>'id','engine_sites'=>'id','engine_publications'=>'id','book_sources'=>'id','book_editions'=>'id','book_reviews'=>'id','book_release_links'=>'id','forum_sources'=>'id','forum_topics'=>'id','forum_operations'=>'id','lite_sites'=>'id','lite_jobs'=>'id','editorial_releases'=>'id','editorial_events'=>'id','logs_bindings'=>'project_id','logs_outbox'=>'id','bots_bindings'=>'project_id','bots_messages'=>'id','bots_events'=>'id','incident_policies'=>'project_id','incidents'=>'id','incident_signals'=>'id','incident_events'=>'id','ops_services'=>'id','ops_service_incidents'=>'service_id,incident_id','ops_support'=>'id','bots_support_links'=>'message_id','bots_feedback'=>'support_id','ops_followups'=>'incident_id,task_id','reminder_subscriptions'=>'id','reminder_reads'=>'id','integration_rates'=>'provider','integration_jobs'=>'id','integration_failures'=>'id','integration_journal'=>'id'
 ];
+// Only the fixed transfer inventory (and the recovery migration ledger) may be read.
+// PostgreSQL's catalog marks collatable types via attcollation; column names alone
+// cannot distinguish e.g. github_deliveries.delivery_id from client_stage_hours.delivery_id.
+function transferOrder(PDO $db,string $table,string $order): string {
+    $inventory=TRANSFER_TABLES+['schema_migrations'=>'version'];
+    if (!isset($inventory[$table]) || $inventory[$table]!==$order) throw new Problem('Неизвестный ключ переноса: '.$table,503);
+    $keys=explode(',',$order);
+    $pg=isPostgres($db); $collatable=[];
+    if ($pg) {
+        $columns=query($db,"SELECT a.attname, CASE WHEN a.attcollation<>0 THEN 1 ELSE 0 END AS collatable
+            FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='public' AND c.relname=? AND c.relkind IN ('r','p')
+            AND a.attnum>0 AND NOT a.attisdropped",[$table]);
+        foreach ($columns as $column) $collatable[$column['attname']]=(int)$column['collatable']===1;
+    }
+    $parts=[];
+    foreach ($keys as $key) {
+        if ($pg && !array_key_exists($key,$collatable)) throw new Problem('Отсутствует колонка ключа переноса: '.$table.'.'.$key,503);
+        // BINARY and C use byte order; numeric keys retain native numeric ordering.
+        // Do not cast keys to text (10 must sort after 2 for integer identifiers).
+        $parts[]='"'.$key.'"'.($pg?($collatable[$key]?' COLLATE pg_catalog."C"':''):' COLLATE BINARY');
+    }
+    return implode(',',$parts);
+}
 function transferRows(PDO $db,string $table,string $order): iterable {
-    // C collation for PostgreSQL text keys (SQLite default BINARY). All named columns are fixed by the inventory.
-    $order=implode(',',array_map(fn($c)=>isPostgres($db)&&in_array($c,['bucket','connection_key','handle','event_key','event_hash','week_on','request_key','delivery_id','source','operation','provider','slot'],true)?$c.' COLLATE "C"':$c,explode(',',$order)));
+    $order=transferOrder($db,$table,$order);
     $columns=$table==='document_versions' && isPostgres($db)?"document_id,revision,sha256,encode(bytes,'hex') AS bytes,actor_id,created_at,object_key,original_size,storage_state":"*";
-    $stmt=$db->query("SELECT $columns FROM $table ORDER BY $order");
+    $relation=(isPostgres($db)?'public.':'main.').'"'.$table.'"';
+    $stmt=$db->query("SELECT $columns FROM $relation ORDER BY $order");
     while ($row=$stmt->fetch(PDO::FETCH_ASSOC)) {
         if ($table==='document_versions') {
             if (isPostgres($db)) $row['bytes']=hex2bin($row['bytes']);

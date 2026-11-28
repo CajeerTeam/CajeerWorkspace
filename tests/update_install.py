@@ -28,7 +28,7 @@ class InstallTests(unittest.TestCase):
         actual=os.getenv('WORKSPACE_PREVIOUS_RELEASE')
         cls.source_schema=51
         current=(ROOT/'VERSION').read_text().strip()
-        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else '1.8.1'
+        cls.previous=Path(actual).resolve() if actual else release.build(cls.base/'previous'); cls.source=cls.previous.stem.removeprefix('CajeerWorkspace-'); cls.target=current if actual else current.rsplit('.',1)[0]+'.'+str(int(current.rsplit('.',1)[1])+1)
         cls.key=cls.base/'key'; cls.pub=cls.base/'pub'; cls.sig=cls.base/'sig'
         subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:2048','-out',cls.key],check=True,capture_output=True)
         subprocess.run(['openssl','pkey','-in',cls.key,'-pubout','-out',cls.pub],check=True,capture_output=True)
@@ -173,7 +173,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.run_action('finish')['status'],'completed');ui.controls(before,recovery.pg_snapshot(self.objects,self.data),51)
     def test_forward_schema(self):
         if self.source_schema!=51: self.skipTest("Future fixture requires current-schema source")
-        # A separately signed future fixture exercises the migration path, not a production schema change in 1.8.0.
+        # A separately signed future fixture exercises the migration path, not a production schema change in the current release.
         with zipfile.ZipFile(self.archive) as z: files={n:z.read(n) for n in z.namelist() if n!='SHA256SUMS'}
         files['app/Core.php']=files['app/Core.php'].replace(b'const SCHEMA_VERSION = 51;',b'const SCHEMA_VERSION = 52;')
         old_freeze=release.sha(files['database/schema-freeze.json']); freeze=json.loads(files['database/schema-freeze.json']);freeze['schema']=52

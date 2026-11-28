@@ -57,7 +57,12 @@ try {
     $sid=(int)query($db,'SELECT id FROM client_stages WHERE offer_id=?',[$offer2])->fetchColumn(); $sc=['order_id'=>$order,'stage_id'=>$sid];
     creject(fn()=>$cmd('client.task',$sc+['task_id'=>$t2]),404,'foreign task denied');
     $cmd('client.task',$sc+['task_id'=>$t]); creject(fn()=>$cmd('client.deliver',$sc+['result_text'=>'Result']),409,'unfinished task denied');
-    $week='2024-12-30'; $sheet=saveTime($db,$dev,ck(),$p,$week,0,['task_id'=>$t,'worked_on'=>$week,'minutes'=>'90','note'=>'Work']); submitTime($db,$dev,ck(),$p,$sheet,2); decideTime($db,$owner,ck(),$p,$sheet,3,true,'Approved');
+    $week='2024-12-30'; $sheet=saveTime($db,$dev,ck(),$p,$week,0,['task_id'=>$t,'worked_on'=>$week,'minutes'=>'30','note'=>'Work']);
+    // Force 2 and 10 to distinguish numeric from lexicographic ordering.
+    query($db,'UPDATE time_entries SET id=2 WHERE sheet_id=?',[$sheet]);
+    saveTime($db,$dev,ck(),$p,$week,2,['task_id'=>$t,'worked_on'=>'2024-12-31','minutes'=>'60','note'=>'Work 2']);
+    query($db,'UPDATE time_entries SET id=10 WHERE sheet_id=? AND worked_on=?',[$sheet,'2024-12-31']);
+    submitTime($db,$dev,ck(),$p,$sheet,3); decideTime($db,$owner,ck(),$p,$sheet,4,true,'Approved');
     changeTask($db,$dev,ck(),$t,1,'done');
     $cmd('client.deliver',$sc+['result_text'=>'First result','document'=>$doc.':1']);
     $did=(int)query($db,'SELECT id FROM client_deliveries WHERE stage_id=?',[$sid])->fetchColumn();
@@ -66,15 +71,37 @@ try {
     $cmd('client.deliver',$sc+['result_text'=>'Second result','document'=>$doc.':1']); $did2=(int)query($db,'SELECT id FROM client_deliveries WHERE stage_id=? AND revision=2',[$sid])->fetchColumn();
     clientGuestDecision($db,$g,'guest.delivery',$did2,2,true,'Accepted',$session); clientGuestDecision($db,$g,'guest.delivery',$did2,2,true,'Accepted',$session);
     ccheck((int)query($db,'SELECT accepted_minutes FROM client_deliveries WHERE id=?',[$did2])->fetchColumn()===90,'approved time snapshot');
-    ccheck((int)$db->query('SELECT COUNT(*) FROM client_stage_hours')->fetchColumn()===1,'no duplicate hours');
+    ccheck((int)$db->query('SELECT COUNT(*) FROM client_stage_hours')->fetchColumn()===2,'no duplicate hours');
     ccheck((int)$db->query('SELECT COUNT(*) FROM cash_entries')->fetchColumn()===0,'no automatic cash operations');
     $details=clientOrderDetails($db,guestClientOrder($db,$g),true); ccheck(count($details)===2 && $details[0]['total']===10050 && !isset($details[0]['stages'][0]['tasks']),'guest published scope only');
     $_SESSION=['mfa_at'=>time(),'csrf'=>str_repeat('a',64)]; $page=clientsPage($db,$owner,$order,1); ccheck(count($page['offers'])===2,'owner order history');
     revokeGuest($db,$owner,$p,$g); ccheck(guestClientOrder($db,$g)===null,'revoked guest');
     creject(fn()=>clientGuestDecision($db,$g,'guest.delivery',$did2,2,true,'Accepted',$session),403,'revoked decision denied');
+    // Webhook identifiers are textual even though the client delivery key shares their name.
+    $deliveryKeys=['a0000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001'];
+    $raw='{}'; $secret=str_repeat('s',32); $signature='sha256='.hash_hmac('sha256',$raw,$secret);
+    foreach ($deliveryKeys as $key) ccheck(ghReceive($db,$raw,$signature,$key,'ping',$secret)==='accepted','text delivery fixture');
+    sort($deliveryKeys,SORT_STRING);
+    $checkTransferOrder=function(\PDO $conn)use($deliveryKeys,$did2){
+        $hours=iterator_to_array(transferRows($conn,'client_stage_hours',TRANSFER_TABLES['client_stage_hours']),false);
+        ccheck(array_map('intval',array_column($hours,'entry_id'))===[2,10],'numeric composite key order');
+        ccheck(array_map('intval',array_column($hours,'delivery_id'))===[$did2,$did2],'delivery references preserved');
+        ccheck(array_map('intval',array_column($hours,'minutes'))===[30,60],'hour amounts preserved');
+        $deliveries=iterator_to_array(transferRows($conn,'github_deliveries',TRANSFER_TABLES['github_deliveries']),false);
+        ccheck(array_column($deliveries,'delivery_id')===$deliveryKeys,'binary text delivery order');
+    };
+    $checkTransferOrder($db);
     if (in_array('--postgres',$argv,true)) {
-        $r=migrateToPostgres($dir.'/source.sqlite'); ccheck($r['tables']['client_orders']['rows']===2 && $r['tables']['client_deliveries']['rows']===2 && $r['tables']['client_stage_hours']['rows']===1,'PostgreSQL transfer');
-        $pg=postgresConnect(); ccheck(clientOrder($pg,$owner,$order)['title']==='Order','PostgreSQL order'); ccheck((int)query($pg,'SELECT accepted_minutes FROM client_deliveries WHERE id=?',[$did2])->fetchColumn()===90,'PostgreSQL hours');
+        $r=migrateToPostgres($dir.'/source.sqlite'); ccheck($r['tables']['client_orders']['rows']===2 && $r['tables']['client_deliveries']['rows']===2 && $r['tables']['client_stage_hours']['rows']===2,'PostgreSQL transfer');
+        $pg=postgresConnect();
+        ccheck(transferOrder($pg,'client_stage_hours',TRANSFER_TABLES['client_stage_hours'])==='"delivery_id","entry_id"','integer keys must not use collation');
+        ccheck(transferOrder($pg,'github_deliveries',TRANSFER_TABLES['github_deliveries'])==='"delivery_id" COLLATE pg_catalog."C"','text keys use C collation');
+        $checkTransferOrder($pg);
+        putenv('WORKSPACE_RECOVERY_OFFLINE=1');
+        $snapshot=recoveryPgInspect($pg);
+        foreach ($r['tables'] as $table=>$digest) ccheck($snapshot['tables'][$table]===$digest,'recovery digest matches transfer: '.$table);
+        putenv('WORKSPACE_RECOVERY_OFFLINE');
+        ccheck(clientOrder($pg,$owner,$order)['title']==='Order','PostgreSQL order'); ccheck((int)query($pg,'SELECT accepted_minutes FROM client_deliveries WHERE id=?',[$did2])->fetchColumn()===90,'PostgreSQL hours');
         ccheck(clientCommand($pg,$owner,ck(),'client.party',['name'=>'Postgres'])>$party,'PostgreSQL sequence'); $pg=null;
     }
     echo "OK · $checks проверок заказов и приёмки\n";

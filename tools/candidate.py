@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import recovery
 import release
 
-OLD, NEW = '1.7.2', '1.8.0'
+OLD, NEW = '1.8.0', '1.8.1'
 OLD_SCHEMA, SCHEMA = 51, 51
 FREEZE = json.loads((release.ROOT / 'database/schema-freeze.json').read_text())
 
@@ -243,7 +243,7 @@ def switch(root, target, backup, backup_sha, data, objects):
         if target==OLD:
             # Rollback requires the exact pre-upgrade schema and state.
             try: restored=old_snapshot(old_folder,backend,data,objects,env)
-            except ValueError as exc: raise ValueError('Rollback requires reviewed restoration of schema 51 using 1.7.2 recovery tools') from exc
+            except ValueError as exc: raise ValueError(f'Rollback requires reviewed restoration of schema 51 using {OLD} recovery tools') from exc
             require(recovery.canonical(restored)==recovery.canonical(before),'Restored state differs from pre-upgrade backup')
             smoke(old_folder,OLD,env)
             require(recovery.canonical(old_snapshot(old_folder,backend,data,objects,env))==recovery.canonical(before),'Restored state changed')
