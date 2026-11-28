@@ -94,7 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--group', action='append', choices=GROUPS, help='repeat to select groups; defaults to all')
     parser.add_argument('--lite-source', default=os.environ.get('WORKSPACE_LITE_TEST_SOURCE'))
-    parser.add_argument('--previous', help='verified original full 1.8.0 distribution')
+    parser.add_argument('--previous', help='verified original full 1.8.1 distribution')
     parser.add_argument('--timeout', type=int, default=180)
     args = parser.parse_args()
     if not 10 <= args.timeout <= 1800:

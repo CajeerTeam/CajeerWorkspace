@@ -42,7 +42,7 @@ function authThrottle(PDO $db,string $bucket,int $limit=8): void {
     atomic($db,function() use($db,$key,$now,$limit) {
         query($db,'DELETE FROM login_attempts WHERE started<=?',[$now-600]);
         if ((int)query($db,'SELECT attempts FROM login_attempts WHERE bucket=?',[$key])->fetchColumn()>=$limit) throw new Problem('Слишком много попыток. Повторите через 10 минут.',429);
-        query($db,'INSERT INTO login_attempts VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1',[$key,$now]);
+        query($db,'INSERT INTO login_attempts(bucket,started,attempts) VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=login_attempts.attempts+1',[$key,$now]);
     });
 }
 function mfaFresh(): bool { return (int)($_SESSION['mfa_at']??0)>=time()-300 && ($_SESSION['mfa_at']??0)<=time(); }

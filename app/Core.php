@@ -8,7 +8,7 @@ use RuntimeException;
 use Throwable;
 
 const ROOT = __DIR__ . '/..';
-const VERSION = '1.8.1';
+const VERSION = '1.8.2';
 const SCHEMA_VERSION = 51;
 const ROLES = ['owner'=>'Владелец', 'manager'=>'Менеджер команды', 'developer'=>'Разработчик', 'accountant'=>'Бухгалтер', 'legal'=>'Юрист', 'viewer'=>'Наблюдатель'];
 const PROJECT_KINDS = ['internal'=>'Внутренний', 'client'=>'Клиентский', 'oss'=>'Open source'];
@@ -234,7 +234,7 @@ function authenticate(PDO $db, string $email, string $password, string $peer): ?
         foreach ($keys as $key=>$limit) {
             $count = query($db,'SELECT attempts FROM login_attempts WHERE bucket=?',[$key])->fetchColumn();
             if ((int)$count >= $limit) throw new Problem('Слишком много попыток входа. Повторите через 10 минут.', 429);
-            query($db,'INSERT INTO login_attempts VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1',[$key,$now]);
+            query($db,'INSERT INTO login_attempts(bucket,started,attempts) VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=login_attempts.attempts+1',[$key,$now]);
         }
     });
     $user = query($db,'SELECT * FROM users WHERE LOWER(email)=? AND enabled=1',[$email])->fetch();
